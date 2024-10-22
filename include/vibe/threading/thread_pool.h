@@ -16,7 +16,7 @@
 namespace threading {
 
     using std::vector, std::mutex, std::condition_variable, std::atomic, std::queue, std::thread;
-    using std::make_shared, std::shared_ptr, std::packaged_task, std::future;
+    using std::make_shared, std::shared_ptr, std::packaged_task, std::future, std::function;
 
 
     class ThreadPool {
@@ -33,7 +33,7 @@ namespace threading {
 
     public:
 
-       explicit ThreadPool(size_t threads);
+       explicit ThreadPool(size_t threads = 4);
         ~ThreadPool();
 
         future<void> addTask(std::function<void()> task);

@@ -31,7 +31,7 @@ namespace neosys {
         [[maybe_unused]] static int run_command(const std::vector<const char*> &args, const std::string& _path = path);
         [[maybe_unused]] static std::mt19937& get_rng();
         [[maybe_unused]] static unsigned long random();
-        [[maybe_unused]] static std::string readFile(const std::string &path, char separator = '\0');
+        [[maybe_unused]] static std::string readFile(const std::string &path);
         [[maybe_unused]] static int writeFile(const std::string &path, const std::string &content);
 
         /* system process here */

@@ -1,8 +1,9 @@
 #include "../../include/vibe/threading/thread_pool.h"
 
+#include <iostream>
 using namespace threading;
 
-ThreadPool::ThreadPool(const size_t threads) : size_(threads), stop_(false) {
+ThreadPool::ThreadPool(const size_t threads ) : size_(threads), stop_(false) {
 
   for (size_t i = 0; i < threads; i++) {
 

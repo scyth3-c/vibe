@@ -77,7 +77,7 @@ int neosys::process::run_command(const std::vector<const char*> &args, const std
 
 
 
-std::string neosys::process::readFile(const std::string &path, char separator) {
+std::string neosys::process::readFile(const std::string &path) {
     std::ifstream reader(path);
     std::string line, body;
 

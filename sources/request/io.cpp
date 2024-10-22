@@ -4,26 +4,30 @@ RequestIO::RequestIO(const shared_ptr<vector<epoll_event> > &events,
                      const std::shared_ptr<RoutesMap> &routes,
                      int &filed,
                      int &epoll_fd,
-                     const shared_ptr<Server> &con) : events(events),
-                                                      routes(routes),
-                                                      file_descriptor(std::make_unique<int>(filed)),
+                     const shared_ptr<Server> &con) : file_descriptor(std::make_unique<int>(filed)),
                                                       epoll_fd(std::make_unique<int>(epoll_fd)),
+                                                      events(events),
+                                                      routes(routes),
                                                       connection(con) {
 
     thread_pool_ = make_shared<threading::ThreadPool>(threads_);
+    taskManager = make_unique<TaskManager>();
 }
 
 
-void RequestIO::Dispatch(const int id, epoll_event &event) const {
+void RequestIO::Dispatch(const int id, epoll_event event) const {
 
-   auto task =  thread_pool_->addTask([&]()->void {
-        this->Process(id, event);
+    std::shared_future<void> future = thread_pool_->addTask([this, id, event]()->void {
+                this->Process(id, event);
+                taskManager->notifyOne(id);
     });
-    task.get();
+
+    future.get();
+    // taskManager->addTask(0, future);
 }
 
 
-void RequestIO::Process(const int id, epoll_event &event) const {
+void RequestIO::Process(const int id, epoll_event event) const {
 
     if (id == -1) {
         terminal(VB_EPOLL_CERR, strerror(errno));
@@ -58,9 +62,9 @@ void RequestIO::Process(const int id, epoll_event &event) const {
 
         } else
                 ProcessFileDescriptor(event_fd, id);
-
     }
 }
+
 
 
 
@@ -139,7 +143,6 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
     }
 }
 
-
 bool RequestIO::TimeGuard(const RoutesMap::const_iterator &itr) {
     if (itr->second->time_key <= 0)
         return false;
@@ -156,4 +159,3 @@ bool RequestIO::TimeGuard(const RoutesMap::const_iterator &itr) {
 void RequestIO::SetThreads(size_t size) {
     thread_pool_ = make_shared<threading::ThreadPool>(size);
 }
-
