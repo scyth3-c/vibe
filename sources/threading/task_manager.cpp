@@ -2,27 +2,43 @@
 
 #include <thread>
 
-TaskManager::TaskManager(): future_map() {
+TaskManager::TaskManager() {
     // init dispose loop
     thread_ = make_unique<thread>([this]() {
         while (true) {
+
             {
-                std::unique_lock<std::mutex> lock(mutex_);
+                std::unique_lock<mutex> lock(manage_lock);
                 condition_.wait(lock);
-                if (stop_ && future_map.empty()) return;
+                if (stop_ && inserted_fd.empty()) return;
             }
 
-            int key = queue_.front();
+            std::cout << "popping " << inserted_fd.size() << std::endl;
 
-            if (auto ftr = future_map.find(key); ftr != future_map.end()) {
+            if (stop_ && inserted_fd.empty()) break;
 
-                if (ftr->second.first.valid()) {
-                    ftr->second.first.get();
-                    future_map.erase(ftr);
-                    std::cout << "heho" << std::endl;
+            for (auto it = ready_fds.begin(); it != ready_fds.end();) {
+
+                if (auto fd_it = inserted_fd.find(*it); fd_it != inserted_fd.end()) {
+
+                    try {
+
+                        auto& future = fd_it->second;
+                        if (future.valid()) {
+
+                            future.wait();
+                            future.get();
+                        }
+                        inserted_fd.erase(fd_it);
+                        it = ready_fds.erase(it);
+                    } catch (const std::exception& e) {
+
+                        ++it;
+                    }
+                } else {
+                    ++it;
                 }
             }
-
         }
     });
 }
@@ -33,21 +49,15 @@ TaskManager::~TaskManager() {
     thread_->join();
 }
 
-void TaskManager::addTask(int fd, std::shared_future<void>& task) {
-   try {
-    future_map.insert(make_pair(fd, std::make_pair(move(task), false)));
-   }catch (std::exception &e) {
-       std::cerr << e.what() << std::endl;
-       task.get();
-   }
+void TaskManager::addTask(const int fd, future<void> task)
+{
+       std::lock_guard<mutex> lock(manage_lock);
+       inserted_fd[fd] = std::move(task);
 }
 
-void TaskManager::notifyOne(const int fd) {
-    try {
-        queue_.push(fd);
-        future_map[fd].second = true;;
-        condition_.notify_one();
-    }catch (std::exception &e) {
-     std::cerr << e.what() << std::endl;
-    }
+void TaskManager::addReadyFd(const int fd)
+{
+        std::lock_guard<mutex> lock(manage_lock);
+        ready_fds.push_back(fd);
+        condition_.notify_all();
 }

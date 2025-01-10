@@ -31,7 +31,6 @@ struct VHeaders_t {
     VHeaders_t(std::initializer_list<LIST...> arguments) : list(arguments) {
           if (!list.empty()){
               for(auto &it : list) {
-                  std::cout << it << std::endl;
                   aloc.push_back(it);
               }
               initial = true;
@@ -428,7 +427,6 @@ inline curl_slist *HTTP::makeVHeaders(const std::vector<string>& headers) {
             return list;
 
         for (auto &it : headers) {
-            std::cout << it << std::endl;
             list = curl_slist_append(list, it.c_str());
         }
         return list;

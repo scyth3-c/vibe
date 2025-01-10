@@ -39,9 +39,10 @@ class RequestIO {
     shared_ptr<threading::ThreadPool> thread_pool_;
 
     size_t threads_{4};
+    std::mutex mutex_fd;
 
-    void Process(int, epoll_event) const;
-    void ProcessFileDescriptor(int, int) const;
+    void Process(int, epoll_event);
+    void ProcessFileDescriptor(int, int);
 
     public:
 
@@ -53,12 +54,14 @@ class RequestIO {
 
 
 
-    void Dispatch(int id,  epoll_event event) const;
+    void Dispatch(int id,  epoll_event event) ;
     void SetThreads(size_t size);
 
     static void ExecuteRoute(const shared_ptr<Server> &instance, const shared_ptr<RoutesMap> &routes);
 
     static bool TimeGuard(const RoutesMap::const_iterator & itr);
+    static bool is_fd_valid(int fd);
+
 };
 
 #endif //IO_H

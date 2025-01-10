@@ -15,24 +15,31 @@ RequestIO::RequestIO(const shared_ptr<vector<epoll_event> > &events,
 }
 
 
-void RequestIO::Dispatch(const int id, epoll_event event) const {
+void RequestIO::Dispatch(const int id, epoll_event event)  {
 
-    std::shared_future<void> future = thread_pool_->addTask([this, id, event]()->void {
+    auto future  = thread_pool_->addTask([this, id, event]()->void {
                 this->Process(id, event);
-                taskManager->notifyOne(id);
+                taskManager->addReadyFd(id);
     });
 
     future.get();
-    // taskManager->addTask(0, future);
-}
+
+    // taskManager->addTask(id, thread_pool_->addTask([this, id, event]()->void {
+    //             this->Process(id, event);
+    //             taskManager->addReadyFd(id);
+    // }));
+ }
 
 
-void RequestIO::Process(const int id, epoll_event event) const {
+void RequestIO::Process(const int id, epoll_event event)  {
 
     if (id == -1) {
         terminal(VB_EPOLL_CERR, strerror(errno));
         return;
     }
+
+    std::cerr << "Processing request: " << id << std::endl;
+
 
     constexpr auto socket_len_error_value = static_cast<socklen_t>(-1);
 
@@ -61,14 +68,25 @@ void RequestIO::Process(const int id, epoll_event event) const {
             }
 
         } else
-                ProcessFileDescriptor(event_fd, id);
+        {
+            std::cout <<"INIT FOR: "<< event_fd << std::endl;
+            ProcessFileDescriptor(event_fd, id);
+            std::cout <<"FINISH FOR: "<< event_fd << std::endl;
+
+        }
     }
 }
 
 
 
 
-void RequestIO::ProcessFileDescriptor(const int event_fd, const int notice) const {
+void RequestIO::ProcessFileDescriptor(const int event_fd, const int notice)  {
+
+
+   std::lock_guard<std::mutex> guard{mutex_fd};
+    if (!is_fd_valid(event_fd)) {
+        return;
+    }
 
     std::array<char, DEF_BUFFER_SIZE> buffer{};
 
@@ -77,7 +95,8 @@ void RequestIO::ProcessFileDescriptor(const int event_fd, const int notice) cons
         if (errno == EWOULDBLOCK)
             return;
 
-        terminal(VB_EPOLL_CERR, strerror(errno));
+        terminal(VB_EPOLL_CERR, strerror(errno));+
+
         epoll_ctl(*epoll_fd, EPOLL_CTL_DEL, event_fd, nullptr);
         close(event_fd);
 
@@ -87,6 +106,7 @@ void RequestIO::ProcessFileDescriptor(const int event_fd, const int notice) cons
         close(event_fd);
 
     } else {
+
         const auto base = std::make_shared<Server>();
 
         base->setPort(connection->getPort());
@@ -138,12 +158,14 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
 
     instance->sendResponse(send_target);
 
-    if (close(instance->getDescription()) < enums::neo::eReturn::OK) {
-        throw std::range_error(VB_SOCKET_CLOSE);
+    std::cout << "FDD:" << instance->getDescription() << std::endl;
+    if (instance->getDescription() >= 0) {
+        close(instance->getDescription());
     }
 }
 
 bool RequestIO::TimeGuard(const RoutesMap::const_iterator &itr) {
+
     if (itr->second->time_key <= 0)
         return false;
     if (itr->second->time_point == std::chrono::time_point<std::chrono::system_clock>())
@@ -158,4 +180,8 @@ bool RequestIO::TimeGuard(const RoutesMap::const_iterator &itr) {
 
 void RequestIO::SetThreads(size_t size) {
     thread_pool_ = make_shared<threading::ThreadPool>(size);
+}
+
+bool RequestIO::is_fd_valid(const int fd) {
+    return fcntl(fd, F_GETFD) != -1 || errno != EBADF;
 }

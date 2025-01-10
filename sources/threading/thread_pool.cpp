@@ -9,7 +9,7 @@ ThreadPool::ThreadPool(const size_t threads ) : size_(threads), stop_(false) {
 
     threads_.emplace_back([this]() {
 
-       while(static_cast<bool>(enums::neo::eStatus::START)){
+       while(!stop_){
 
          std::function<void()> task;
 
@@ -17,15 +17,28 @@ ThreadPool::ThreadPool(const size_t threads ) : size_(threads), stop_(false) {
                std::unique_lock<std::mutex> lock(mutex_);
                this->condition_.wait(lock, [this] { return this->stop_ || !this->queue_.empty();});
 
-               if(this->stop_ && this->queue_.empty())
+               if(this->stop_)
                  return;
 
-               task = std::move(this->queue_.front());
-               this->queue_.pop();
+              if (!this->queue_.empty())
+              {
+                task = std::move(this->queue_.front());
+                if (task == nullptr)
+                  continue;
+                queue_.pop();
+              }
          }
 
-         task();
-
+       if(task)
+       {
+         try
+         {
+           task();
+         }catch (std::exception &e)
+         {
+           std::cerr << e.what() << std::endl;
+         }
+       }
        }
     });
   }
@@ -33,10 +46,17 @@ ThreadPool::ThreadPool(const size_t threads ) : size_(threads), stop_(false) {
 
 ThreadPool::~ThreadPool() {
 
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+    stop_ = true;
+  }
+
     stop_.store(true);
     condition_.notify_all();
+
     for(thread &thread : threads_)
-      thread.join();
+     if(thread.joinable())
+       thread.join();
 }
 
 
