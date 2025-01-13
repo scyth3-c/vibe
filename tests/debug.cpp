@@ -6,7 +6,7 @@ int main() {
     router.setPort(8081);
 
     router.get("/",{[&](Query &web) {
-        web.send("Hello World, Debug");
+        web.send("Hello World, Debug v5");
     }});
 
 

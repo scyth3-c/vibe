@@ -2,62 +2,59 @@
 
 #include <thread>
 
+#include "../../include/vibe/util/nterminal.h"
+
 TaskManager::TaskManager() {
     // init dispose loop
     thread_ = make_unique<thread>([this]() {
         while (true) {
-
             {
                 std::unique_lock<mutex> lock(manage_lock);
                 condition_.wait(lock);
-                if (stop_ && inserted_fd.empty()) return;
+                if (stop_ && futures_.empty()) return;
             }
 
-            std::cout << "popping " << inserted_fd.size() << std::endl;
+            std::cout << "popping " << futures_.size() << std::endl;
 
-            if (stop_ && inserted_fd.empty()) break;
+            if (stop_ && futures_.empty()) break;
+            if(futures_.empty()) continue;
 
-            for (auto it = ready_fds.begin(); it != ready_fds.end();) {
-
-                if (auto fd_it = inserted_fd.find(*it); fd_it != inserted_fd.end()) {
-
-                    try {
-
-                        auto& future = fd_it->second;
-                        if (future.valid()) {
-
-                            future.wait();
-                            future.get();
-                        }
-                        inserted_fd.erase(fd_it);
-                        it = ready_fds.erase(it);
-                    } catch (const std::exception& e) {
-
-                        ++it;
-                    }
-                } else {
+            for(auto it = futures_.begin(); it != futures_.end();) {
+                if(it->second.valid()) {
+                    terminal("validdd!!");
+                    it->second.get();
+                    it = futures_.erase(it);
+                }else {
                     ++it;
                 }
             }
         }
-    });
+    });    //
+    // auto fut  =thread_pool_->addTask([this, id, event](const shared_ptr<std::promise<void>>& future)->void {
+    //              this->Process(id, event);
+    //              future->set_value();
+    // });
+    //
+    // fut.get();
 }
 
 TaskManager::~TaskManager() {
     stop_ = false;
     condition_.notify_all();
-    thread_->join();
+    if(thread_->joinable()) thread_->join();
 }
 
-void TaskManager::addTask(const int fd, future<void> task)
+void TaskManager::manage(const int fd_i, future<void> task)
 {
        std::lock_guard<mutex> lock(manage_lock);
-       inserted_fd[fd] = std::move(task);
+       futures_.emplace(fd_i,std::move(task));
 }
 
-void TaskManager::addReadyFd(const int fd)
+void TaskManager::dispose()
 {
-        std::lock_guard<mutex> lock(manage_lock);
-        ready_fds.push_back(fd);
-        condition_.notify_all();
+    std::unique_lock<mutex> lock(manage_lock);
+    condition_.notify_all();
 }
+
+
+

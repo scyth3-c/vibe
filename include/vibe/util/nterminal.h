@@ -19,7 +19,7 @@ constexpr auto VB_MAIN_THREAD =  "AN ERROR OCCURRED IN THE MAIN PROCESSING THREA
 
 
 template<class...P>
-auto terminal(P const&... args) {
+auto terminal(P const&... args) -> void {
     ((std::cout<<"[ "<<args<<"]"<<std::endl),...);
 }
 

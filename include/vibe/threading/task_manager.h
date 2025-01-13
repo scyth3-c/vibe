@@ -11,7 +11,7 @@
 #include <thread>
 #include <unordered_map>
 #include <iostream>
-#include <vector>
+#include <unistd.h>
 
 using std::queue, std::future,
       std::mutex, std::condition_variable,
@@ -23,9 +23,7 @@ class TaskManager {
     condition_variable condition_;
     mutex manage_lock;
 
-    unordered_map<int, future<void>> inserted_fd;
-    vector<int> ready_fds;
-
+    unordered_map<int, future<void>> futures_;
     unique_ptr<thread> thread_;
 
     bool stop_{};
@@ -34,8 +32,9 @@ public:
     TaskManager();
     ~TaskManager();
 
-    void addTask(int, future<void> task);
-    void addReadyFd(int fd);
+    void manage(int fd_i, future<void> task);
+    void dispose();
+
 };
 
 

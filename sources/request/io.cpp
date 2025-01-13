@@ -11,24 +11,20 @@ RequestIO::RequestIO(const shared_ptr<vector<epoll_event> > &events,
                                                       connection(con) {
 
     thread_pool_ = make_shared<threading::ThreadPool>(threads_);
+    dispose_pool_ = make_shared<threading::ThreadPool>(1);
     taskManager = make_unique<TaskManager>();
 }
 
 
 void RequestIO::Dispatch(const int id, epoll_event event)  {
 
-    auto future  = thread_pool_->addTask([this, id, event]()->void {
-                this->Process(id, event);
-                taskManager->addReadyFd(id);
+    auto fut  = thread_pool_->addFutureTask([this, id, event](const shared_ptr<std::promise<void>>& future)->void {
+                 this->Process(id, event);
+                 future->set_value();
     });
+    fut.get();
 
-    future.get();
-
-    // taskManager->addTask(id, thread_pool_->addTask([this, id, event]()->void {
-    //             this->Process(id, event);
-    //             taskManager->addReadyFd(id);
-    // }));
- }
+}
 
 
 void RequestIO::Process(const int id, epoll_event event)  {
@@ -37,10 +33,6 @@ void RequestIO::Process(const int id, epoll_event event)  {
         terminal(VB_EPOLL_CERR, strerror(errno));
         return;
     }
-
-    std::cerr << "Processing request: " << id << std::endl;
-
-
     constexpr auto socket_len_error_value = static_cast<socklen_t>(-1);
 
     for (int i = 0; i < id; i++) {
@@ -69,10 +61,7 @@ void RequestIO::Process(const int id, epoll_event event)  {
 
         } else
         {
-            std::cout <<"INIT FOR: "<< event_fd << std::endl;
             ProcessFileDescriptor(event_fd, id);
-            std::cout <<"FINISH FOR: "<< event_fd << std::endl;
-
         }
     }
 }
@@ -95,7 +84,7 @@ void RequestIO::ProcessFileDescriptor(const int event_fd, const int notice)  {
         if (errno == EWOULDBLOCK)
             return;
 
-        terminal(VB_EPOLL_CERR, strerror(errno));+
+        terminal(VB_EPOLL_CERR, strerror(errno));
 
         epoll_ctl(*epoll_fd, EPOLL_CTL_DEL, event_fd, nullptr);
         close(event_fd);
@@ -155,13 +144,8 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
                               : utility_t::guard_route(itr->second->time_key);
     }
 
-
     instance->sendResponse(send_target);
-
-    std::cout << "FDD:" << instance->getDescription() << std::endl;
-    if (instance->getDescription() >= 0) {
-        close(instance->getDescription());
-    }
+    close(instance->getDescription());
 }
 
 bool RequestIO::TimeGuard(const RoutesMap::const_iterator &itr) {

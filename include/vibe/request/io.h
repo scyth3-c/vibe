@@ -36,9 +36,11 @@ class RequestIO {
     shared_ptr<vector<epoll_event>> events;
     shared_ptr<RoutesMap>  routes;
     shared_ptr<Server> connection;
-    shared_ptr<threading::ThreadPool> thread_pool_;
 
-    size_t threads_{4};
+    shared_ptr<threading::ThreadPool> thread_pool_;
+    shared_ptr<threading::ThreadPool> dispose_pool_;
+
+    size_t threads_{3};
     std::mutex mutex_fd;
 
     void Process(int, epoll_event);
