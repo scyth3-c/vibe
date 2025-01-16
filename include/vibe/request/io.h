@@ -20,6 +20,7 @@
 #include "../sockets.h"
 #include "../threading/thread_pool.h"
 #include "../threading/task_manager.h"
+#include "fd_validate.h"
 
 using std::make_shared, std::vector, std::unique_ptr;
 
@@ -33,13 +34,13 @@ class RequestIO {
     unique_ptr<int> file_descriptor;
     unique_ptr<int> epoll_fd;
 
+    shared_ptr<FdValidate> fd_validate;
     shared_ptr<vector<epoll_event>> events;
     shared_ptr<RoutesMap>  routes;
     shared_ptr<Server> connection;
-
     shared_ptr<threading::ThreadPool> thread_pool_;
-    shared_ptr<threading::ThreadPool> dispose_pool_;
 
+    unordered_map<int, bool> closed_fd;
     size_t threads_{3};
     std::mutex mutex_fd;
 
@@ -58,11 +59,9 @@ class RequestIO {
 
     void Dispatch(int id,  epoll_event event) ;
     void SetThreads(size_t size);
-
-    static void ExecuteRoute(const shared_ptr<Server> &instance, const shared_ptr<RoutesMap> &routes);
+    void ExecuteRoute(const shared_ptr<Server> &instance, const shared_ptr<RoutesMap> &routes) const;
 
     static bool TimeGuard(const RoutesMap::const_iterator & itr);
-    static bool is_fd_valid(int fd);
 
 };
 

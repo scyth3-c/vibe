@@ -10,6 +10,7 @@
 #include <memory>
 #include <thread>
 #include <unordered_map>
+#include "../request/fd_validate.h"
 #include <iostream>
 #include <unistd.h>
 
@@ -25,11 +26,12 @@ class TaskManager {
 
     unordered_map<int, future<void>> futures_;
     unique_ptr<thread> thread_;
+    std::shared_ptr<FdValidate> fd_validate_;
 
     bool stop_{};
 public:
 
-    TaskManager();
+    explicit TaskManager(const std::shared_ptr<FdValidate>&);
     ~TaskManager();
 
     void manage(int fd_i, future<void> task);

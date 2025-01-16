@@ -72,7 +72,6 @@ void ThreadPool::init() {
 
               }
          }
-         std::cout << "disposing "<<std::endl;
 
        if(task)
        {

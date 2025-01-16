@@ -4,7 +4,8 @@
 
 #include "../../include/vibe/util/nterminal.h"
 
-TaskManager::TaskManager() {
+TaskManager::TaskManager(const std::shared_ptr<FdValidate>& fv): fd_validate_(fv){
+
     // init dispose loop
     thread_ = make_unique<thread>([this]() {
         while (true) {
@@ -14,33 +15,32 @@ TaskManager::TaskManager() {
                 if (stop_ && futures_.empty()) return;
             }
 
-            std::cout << "popping " << futures_.size() << std::endl;
-
             if (stop_ && futures_.empty()) break;
             if(futures_.empty()) continue;
 
+            std::cout << "popping " << futures_.size() << std::endl;
+
             for(auto it = futures_.begin(); it != futures_.end();) {
                 if(it->second.valid()) {
-                    terminal("validdd!!");
                     it->second.get();
                     it = futures_.erase(it);
                 }else {
                     ++it;
                 }
             }
+
         }
-    });    //
-    // auto fut  =thread_pool_->addTask([this, id, event](const shared_ptr<std::promise<void>>& future)->void {
-    //              this->Process(id, event);
-    //              future->set_value();
-    // });
-    //
-    // fut.get();
+    });
 }
 
 TaskManager::~TaskManager() {
     stop_ = false;
     condition_.notify_all();
+
+    for (const auto& [fd, _] : futures_) {
+        fd_validate_->free(fd);
+    }
+
     if(thread_->joinable()) thread_->join();
 }
 
