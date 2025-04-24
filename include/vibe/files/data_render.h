@@ -5,8 +5,7 @@
 #include <string>
 #include <filesystem>
 
-#include "notify.h"
-#include "local_utility.h"
+#include "../sysop/literals.h"
 
 class dataRender {
 

@@ -3,8 +3,8 @@
 //
 // procesos del sistema
 
-#ifndef VIBE_SYSPROCESS_H
-#define VIBE_SYSPROCESS_H
+#ifndef VIBE_SYSTEM_PROCCESS_H
+#define VIBE_SYSTEM_PROCCESS_H
 
 #include <chrono>
 #include <thread>
@@ -27,7 +27,7 @@ namespace neosys {
        static  const char* const log_path;
        static  const std::string path;
     public:
-        [[maybe_unused]] static inline void _wait(int milliseconds)  { std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds)); }
+        [[maybe_unused]] static inline void _wait(const int milliseconds)  { std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds)); }
         [[maybe_unused]] static int run_command(const std::vector<const char*> &args, const std::string& _path = path);
         [[maybe_unused]] static std::mt19937& get_rng();
         [[maybe_unused]] static unsigned long random();
@@ -39,4 +39,4 @@ namespace neosys {
 
 }
 
-#endif //VIBE_SYSPROCESS_H
+#endif //VIBE_SYSTEM_PROCCESS_H

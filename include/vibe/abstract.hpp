@@ -1,9 +1,12 @@
-//
-// Created by scythe on 5/07/23.
-//
+#ifndef ABSTRACT_
+#define ABSTRACT_
 
-#ifndef VIBE_ENUMS_H
-#define VIBE_ENUMS_H
+#include <chrono>
+
+struct  FDInfo{
+    bool state{};
+    std::chrono::steady_clock::time_point last_active;
+};
 
 namespace enums {
 
@@ -33,4 +36,4 @@ namespace enums {
 
 } // enums
 
-#endif //VIBE_ENUMS_H
+#endif // ABSTRACT_

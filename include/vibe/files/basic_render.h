@@ -3,12 +3,13 @@
 #define BASIC_READER_HPP
 
 #include <string>
-#include <fstream>
 #include <filesystem>
 
-#include "notify.h"
+#include "../sysop/literals.h"
+#include  "../sysop/sysprocess.h"
 
 using std::string;
+
 
 class BasicRead {
 public:

@@ -1,4 +1,4 @@
-#include "../include/vibe/util/parameter_proccess.h"
+#include "../include/vibe/request/parameter_proccess.h"
 
 HTTP_QUERY::HTTP_QUERY() = default;
 HTTP_QUERY::~HTTP_QUERY() = default;
@@ -10,9 +10,7 @@ string HTTP_QUERY::selectPerType(const string &target, const string &conten_type
 }
 
 string HTTP_QUERY::route_refactor_params(const string& _target)  {
-
-    const string content_type = findContenType(_target);
-    if(content_type != STR_ERR) {
+    if(const string content_type = findContenType(_target); content_type != STR_ERR) {
         bool init = true;
         string encoded = selectPerType(_target, content_type , init);
         return init ? encoded : NOT_PARAMS;
@@ -84,8 +82,7 @@ string HTTP_QUERY::raw_form_encoded(const string &target) {
     if (spacepos == string::npos) {
         return RAW_ERROR;
     }
-    string chunk = target.substr(spacepos + 3);
-    if(!chunk.empty()) {
+    if(string chunk = target.substr(spacepos + 3); !chunk.empty()) {
         body.append(chunk);
         return body;
     }

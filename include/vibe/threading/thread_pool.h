@@ -10,7 +10,7 @@
 #include <future>
 #include <thread>
 #include <memory>
-#include "../util/enums.h"
+#include "../abstract.hpp"
 
 
 namespace threading {

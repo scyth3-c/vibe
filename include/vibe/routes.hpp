@@ -9,18 +9,20 @@
 #include <initializer_list>
 #include <functional>
 #include <future>
-
+#include <chrono>
 
 #include "request/request.hpp"
 
-#include "util/basic_render.h"
-#include "util/cpp_reader.h"
-#include "util/mg_reader.h"
-#include "util/data_render.h"
-#include "util/json.hpp"
+#include "files/basic_render.h"
+#include "files/cpp_reader.h"
+#include "files/mg_reader.h"
+#include "files/data_render.h"
+#include "files/json_legacy.hpp"
+#include "request/httpUtils.hpp"
+#include "request/headers.hpp"
 
 using std::string;
-
+using namespace std::chrono;
 
 struct Route {
 private:
@@ -39,30 +41,13 @@ public:
     [[nodiscard]] inline string getType () const noexcept { return route_type; }
 };
 
-
-template<class...P>
-struct Headers_t {
-    Headers_t()= default;
-    [[maybe_unused]] Headers_t(std::initializer_list<P...>list): body(list) {}
-    vector<string> body;
-    string generate(){
-        string response;
-        for (auto &it : body) {
-            response += it + "\n";
-        }
-        return response;
-    }
-};
-using HEADERS = Headers_t<string>;
-
-
 class Query {
 
     bool next_enable  { false};
-    long time_key    {0};
+    milliseconds time_key    {0};
 
     string response {"default"},
-           last,
+           responseBody,
            headers, guardMsg{};
 
     public:
@@ -78,12 +63,12 @@ class Query {
     [[maybe_unused]] void    next()       noexcept;
 
     void    lock()        noexcept;
-    [[nodiscard]] long    getTimeKey()  const noexcept;
+    [[nodiscard]] milliseconds    getTimeKey()  const noexcept;
     [[nodiscard]] string  getGuardMsg() const noexcept;
 
-    [[maybe_unused]] void    setHeaders(HEADERS) noexcept;
+    [[maybe_unused]] void    setHeaders(const HttpHeaders&) noexcept;
     [[maybe_unused]] void    setHeaders(const string&) noexcept;
-    [[maybe_unused]] void    guard(const long&, string custom_msg="") noexcept;
+    [[maybe_unused]] void    guard(const milliseconds&, string custom_msg="") noexcept;
 
 
     //  PARAMS:  CONTENT OPTIONAL CALLBACK
@@ -116,7 +101,7 @@ struct Core_init_t  {
 
     [[nodiscard]] [[maybe_unused]] inline size_t size() const noexcept { return functions.size(); }
 
-     std::pair<string, std::chrono::duration<double>::rep> execute(string _raw, string headers, std::unique_ptr<string> &guard_msg) {
+     std::pair<string, milliseconds> execute(string _raw, string headers, std::unique_ptr<string> &guard_msg) {
         remote_control = new Query();
 
         string response{};
@@ -137,8 +122,8 @@ struct Core_init_t  {
         }
 
         response += remote_control->getData();
-        long time_key = remote_control->getTimeKey();
-        if(time_key > 0)
+        milliseconds time_key = remote_control->getTimeKey();
+        if(time_key > milliseconds(0))
             guard_msg = std::make_unique<string>(remote_control->getGuardMsg());
 
         delete remote_control;
@@ -149,16 +134,17 @@ struct Core_init_t  {
 using MiddlewareList = Core_init_t<std::function<void(Query&)>> ;
 
 struct listen_routes {
+
     listen_routes(string _route, MiddlewareList _funcs, string _type) : middlewares(std::move(_funcs)){
         route = std::move(_route);
         route.setType(std::move(_type));
-        time_key = 0;
+        time_key = milliseconds(0);
     }
 
     Route route;
     MiddlewareList middlewares;
-    std::chrono::duration<double>::rep time_key;
-    std::chrono::time_point<std::chrono::system_clock> time_point{};
+    milliseconds time_key{};
+    system_clock::time_point time_point{};
     std::unique_ptr<string> guardRouteMsg = nullptr;
 };
 

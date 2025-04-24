@@ -24,7 +24,7 @@ constexpr auto RAW_TARGET = "data=";
 #include <memory>
 #include <string>
 
-#include "../request/request.hpp"
+#include "request.hpp"
 
 using std::string;
 using std::make_shared;

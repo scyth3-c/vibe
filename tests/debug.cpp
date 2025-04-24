@@ -6,6 +6,8 @@ int main() {
     router.setPort(8081);
 
     router.get("/",{[&](Query &web) {
+
+        // web.guard(milliseconds(10000));
         web.send("Hello World, Debug v8");
     }});
 

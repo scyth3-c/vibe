@@ -11,20 +11,17 @@
 #include <unistd.h>
 #include <unordered_map>
 
-#include "../util/enums.h"
-#include "../util/parameter_proccess.h"
+#include "../abstract.hpp"
+#include "parameter_proccess.h"
 
 #include "../routes.hpp"
-#include "../util/nterminal.h"
+#include "../sysop/literals.h"
 #include "io.h"
+#include "../configuration.hpp"
 
 namespace workers {
 using RoutesMap = std::unordered_map<string, std::unique_ptr<listen_routes>>;
-using enums::neo;
-
-    constexpr int BUFFER = neo::eSize::BUFFER;
-    constexpr int SESSION = neo::eSize::SESSION;
-    constexpr int INIT_MAX_EVENTS = 10;
+    using enums::neo;
 
     template<class T>
     class RouterEpoll {
@@ -46,6 +43,7 @@ using enums::neo;
 
 
         auto InitListenProcess() {
+
             connection->on();
             file_descriptor = connection->getDescription();
 
@@ -57,18 +55,6 @@ using enums::neo;
         }
 
 
-        auto ListenProcess(epoll_event &event) const {
-            try {
-                const int notice = epoll_wait(epoll_fd, events->data(), INIT_MAX_EVENTS, VB_NVALUE);
-                request_t->Dispatch(notice, event);
-            }
-            catch(const std::exception& e) {
-                terminal(e.what());
-                close(epoll_fd);
-                if(close(file_descriptor) < VB_OK)
-                    throw std::range_error(VB_MAIN_THREAD);
-            }
-        }
 
         auto getMainProcess(const shared_ptr<RoutesMap> &_routes, const neo::LISTEN_TYPE _listen_type = neo::WHILE) {
                 InitListenProcess();
@@ -81,11 +67,31 @@ using enums::neo;
                     close(epoll_fd);
                     throw std::range_error(VB_EPOLL_CTL);
                 }
-                request_t = make_shared<RequestIO>(events, _routes, file_descriptor, epoll_fd, connection);
+                request_t = make_shared<RequestIO>(_routes, file_descriptor, epoll_fd, connection);
 
                 if (_listen_type == neo::WHILE) {
-                    while (static_cast<bool>(listen_status_)) {
-                        ListenProcess(event);
+
+
+                    try
+                    {
+                        while (static_cast<bool>(listen_status_)) {
+
+                            const int notice = epoll_wait(epoll_fd, events->data(), INIT_MAX_EVENTS, CLOCK_SPEED);
+
+                            if (notice == VB_NVALUE)
+                                continue;
+                            if (notice == 0)
+                                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+                            request_t->Dispatch(notice, events);
+
+                        }
+                    }
+                    catch(const std::exception& e) {
+                        terminal(e.what());
+                        close(epoll_fd);
+                        if(close(file_descriptor) < VB_OK)
+                            throw std::range_error(VB_MAIN_THREAD);
                     }
                     close(epoll_fd);
                     close(file_descriptor);
@@ -93,11 +99,11 @@ using enums::neo;
                 }
                 else {
                         // UNIQUE
-                        ListenProcess(event);
-                        ListenProcess(event);
-                        close(epoll_fd);
-                        close(file_descriptor);
-                        request_t.reset();
+                        // const int notice = epoll_wait(epoll_fd, events->data(), INIT_MAX_EVENTS, VB_NVALUE);
+                        // request_t->Dispatch(notice, events);
+                        // close(epoll_fd);
+                        // close(file_descriptor);
+                        // request_t.reset();
                 }
         }
 

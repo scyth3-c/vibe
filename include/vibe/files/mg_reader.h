@@ -3,12 +3,10 @@
 
 #include <memory>
 #include <string>
-#include <fstream>
 #include <filesystem>
 #include <utility>
-#include "notify.h"
+#include "../sysop/literals.h"
 
-#include "local_utility.h"
 
 using std::make_shared;
 using std::shared_ptr;
@@ -24,7 +22,7 @@ public:
     {
 
         if(!std::filesystem::exists(std::filesystem::path(path))) {
-            return {notify::noPath(path), "404"};
+            return {literals::noPath(path), "404"};
         }
             try {
                 size_t init = 0;

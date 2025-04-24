@@ -2,10 +2,8 @@
 // Created by owl on 30/07/24.
 //
 
-#include "../include/vibe/util/sysprocess.h"
-#include <iostream>
-
-#include "../include/vibe/util/nterminal.h"
+#include "../include/vibe/sysop/sysprocess.h"
+#include "../include/vibe/sysop/literals.h"
 
 const char* const neosys::process::log_path = "log_cv.log";
 const std::string neosys::process::path = "PATH=$PATH:/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin";

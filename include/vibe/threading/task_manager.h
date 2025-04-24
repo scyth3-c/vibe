@@ -14,27 +14,29 @@
 #include <iostream>
 #include <unistd.h>
 
-using std::queue, std::future,
+using std::future, std::string,
       std::mutex, std::condition_variable,
       std::thread, std::unique_ptr, std::make_unique,
-      std::unordered_map, std::vector;
+      std::unordered_map, std::vector, std::pair, std::shared_ptr;
 
 class TaskManager {
 
     condition_variable condition_;
     mutex manage_lock;
 
-    unordered_map<int, future<void>> futures_;
+    unordered_map<string, pair<future<void>, bool> > futures_;
     unique_ptr<thread> thread_;
-    std::shared_ptr<FdValidate> fd_validate_;
+    shared_ptr<FdValidate> fd_validate_;
 
-    bool stop_{};
+    bool stop_{false};
 public:
 
-    explicit TaskManager(const std::shared_ptr<FdValidate>&);
+    explicit TaskManager(const shared_ptr<FdValidate>&);
     ~TaskManager();
 
-    void manage(int fd_i, future<void> task);
+    void manage(const string& key, future<void> task);
+    void releaseOne(const string& key);
+
     void dispose();
 
 };

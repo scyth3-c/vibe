@@ -4,14 +4,16 @@
 #include "sockets.h"
 #include "routes.hpp"
 #include "request/router_epoll.h"
-#include "util/enums.h"
+#include "abstract.hpp"
+#include "configuration.hpp"
+#include "request/httpUtils.hpp"
 #include <memory>
 #include <string>
 
 using std::make_shared, std::make_unique;
 using std::string;
 
-using workers::RoutesMap, workers::BUFFER, workers::SESSION;
+using workers::RoutesMap;
 using enums::neo;
 
 template <class T>
@@ -166,7 +168,7 @@ void Vibe<T>::tcpInt() {
     router_epoll = make_shared<workers::RouterEpoll<T>>(tcpControl);
 }
 using Router  = Vibe<Server>;
-using Convert = utility_t;
+using Convert = HttpUtils;
 
 
 #endif // VIBE_H
