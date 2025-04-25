@@ -1,7 +1,9 @@
 #include "suite.h"
 
+// IMPORTANT:
+// contains an extra 20 ms for synchronization
 
- TEST_F(TestSuite, TestBaseOne) {
+ TEST_F(TestSuite_ExtraTime, TestBaseOne) {
 
      Router router;
      router.setPort(8080);
@@ -21,7 +23,7 @@
 
 
 
-  TEST_F(TestSuite, TestBasePost) {
+  TEST_F(TestSuite_ExtraTime, TestBasePost) {
 
       Router router;
       router.setPort(8080);
@@ -42,7 +44,7 @@
 
 
 
- TEST_F(TestSuite, TestCompose) {
+ TEST_F(TestSuite_ExtraTime, TestCompose) {
 
      Router router;
      router.setPort(8080);
@@ -64,7 +66,7 @@
 
 
 
-TEST_F(TestSuite, TestReadFile) {
+TEST_F(TestSuite_ExtraTime, TestReadFile) {
 
     Router router;
     router.setPort(8080);
@@ -84,7 +86,7 @@ TEST_F(TestSuite, TestReadFile) {
 }
 
 
- TEST_F(TestSuite, TestCppRender) {
+ TEST_F(TestSuite_ExtraTime, TestCppRender) {
 
      Router router;
      const string file = "../examples/files/cpp.html";
@@ -114,7 +116,7 @@ TEST_F(TestSuite, TestReadFile) {
 
 
 
- TEST_F(TestSuite, TestHeaders) {
+ TEST_F(TestSuite_ExtraTime, TestHeaders) {
 
      Router router;
      router.setPort(8080);
@@ -122,12 +124,11 @@ TEST_F(TestSuite, TestReadFile) {
 
      router.get("/", {[&](Query &http) {
                 auto headers = http.body.getHeaders();
-                  HEADERS my_headers = {
-                          "header-1: value1",
-                          "header-2: value2",
-                          "header-3: value3",
-                          "header-N: valueN"
+
+                const HttpHeaders my_headers = {
+                  {"custom", "123"}
                   };
+
                   http.setHeaders(my_headers);
                   http.send(headers.get("header-1").value);
            }});
@@ -136,7 +137,7 @@ TEST_F(TestSuite, TestReadFile) {
             router.listenOne();
      )
 
-     VHeaders my_headers = {
+     const VHeaders my_headers = {
       "header-1: valueX"
      };
 
@@ -147,7 +148,7 @@ TEST_F(TestSuite, TestReadFile) {
  }
 
 
- TEST_F(TestSuite, TestMiddleware) {
+ TEST_F(TestSuite_ExtraTime, TestMiddleware) {
 
      Router router;
      router.setPort(8080);
@@ -155,6 +156,12 @@ TEST_F(TestSuite, TestReadFile) {
      router.post("/", {
 
           [&](Query &http) {
+                  http.next();
+          },
+         [&](Query &http) {
+                  http.next();
+          },
+         [&](Query &http) {
                   http.next();
           },
           [&](Query &http) {
@@ -173,7 +180,7 @@ TEST_F(TestSuite, TestReadFile) {
 
 
 
-TEST_F(TestSuite, TestParametersQuery) {
+TEST_F(TestSuite_ExtraTime, TestParametersQuery) {
 
      Router router;
      router.setPort(8080);
@@ -204,7 +211,7 @@ TEST_F(TestSuite, TestParametersQuery) {
 
 
 
-TEST_F(TestSuite, TestParametersPost) {
+TEST_F(TestSuite_ExtraTime, TestParametersPost) {
 
      Router router;
      router.setPort(8080);

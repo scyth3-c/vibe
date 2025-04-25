@@ -8,9 +8,11 @@ int main() {
     router.get("/",{[&](Query &web) {
 
         // web.guard(milliseconds(10000));
-        web.send("Hello World, Debug v8");
+        web.send("Hello World, Debug 1");
     }});
 
+    router.listenOne();
 
-    router.listen();
+
+    return 0;
 }

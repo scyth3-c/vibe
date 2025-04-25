@@ -19,7 +19,7 @@ public:
         }
     }
 
-    void add(std::string_view key, std::string_view value) {
+    void add(const std::string_view key, std::string_view value) {
         validate_header(key, value);
         headers.emplace_back(Header{std::string(key), std::string(value)});
     }
@@ -51,7 +51,7 @@ public:
 private:
     std::vector<Header> headers;
 
-    void validate_header(std::string_view key, std::string_view value) {
+    static void validate_header(const std::string_view key, const std::string_view value) {
         if (key.empty() || value.empty()) {
             throw std::invalid_argument("Header key and value cannot be empty");
         }

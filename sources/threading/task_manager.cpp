@@ -1,10 +1,9 @@
 #include "../../include/vibe/threading/task_manager.h"
 
-
 TaskManager::TaskManager(const shared_ptr<FdValidate>& fv): fd_validate_(fv){
 
     thread_ = make_unique<thread>([this]() {
-        while (true) {
+        while (stop_ != true) {
             {
                 std::unique_lock<mutex> lock(manage_lock);
                 condition_.wait(lock);
@@ -27,17 +26,22 @@ TaskManager::TaskManager(const shared_ptr<FdValidate>& fv): fd_validate_(fv){
             }
 
             fd_validate_->clearOldFd();
-
+            fd_validate_->retryBusyMessages();
         }
     });
 }
 
 TaskManager::~TaskManager() {
+    kill();
+}
+
+void TaskManager::kill() {
     stop_ = true;
     condition_.notify_all();
-
     if(thread_->joinable()) thread_->join();
+    terminal("TaskManager::kill");
 }
+
 
 void TaskManager::manage(const std::string& key, future<void> task)
 {

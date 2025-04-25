@@ -2,18 +2,20 @@
 #define HEADERS_H
 
 #include "../include/vibe/vibe.h"
-#include "../include/vibe/util/sysprocess.h"
+#include "../include/vibe/sysop/sysprocess.h"
+#include "../include/vibe/request/headers.hpp"
 #include "utils/min.veridic.h"
 #include <future>
 #include <string>
 #include <gtest/gtest.h>
 #include <memory>
 #include <regex>
+#include "../include/vibe/configuration.hpp"
 
 using std::string, std::future, std::shared_ptr, std::make_shared;
 #define ISOLATE(logic) std::future<void> isolate_method = std::async(std::launch::async, ([&]() { logic }));
 
-class TestSuite : public ::testing::Test {
+class TestSuite_ExtraTime : public ::testing::Test {
 
   protected:
 
@@ -29,9 +31,9 @@ class TestSuite : public ::testing::Test {
      }
 };
 
-string TestSuite::url;
-string TestSuite::expected_default;
-shared_ptr<Veridic> TestSuite::http;
+string TestSuite_ExtraTime::url;
+string TestSuite_ExtraTime::expected_default;
+shared_ptr<Veridic> TestSuite_ExtraTime::http;
 
 
 #endif //HEADERS_H

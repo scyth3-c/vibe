@@ -38,6 +38,7 @@ public:
     void releaseOne(const string& key);
 
     void dispose();
+    void kill();
 
 };
 

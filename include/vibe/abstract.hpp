@@ -1,13 +1,5 @@
 #ifndef ABSTRACT_
 #define ABSTRACT_
-
-#include <chrono>
-
-struct  FDInfo{
-    bool state{};
-    std::chrono::steady_clock::time_point last_active;
-};
-
 namespace enums {
 
     class neo {

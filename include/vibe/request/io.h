@@ -10,20 +10,23 @@
 #include <netinet/in.h>
 #include <unordered_map>
 #include <vector>
+#include <functional>
 
 #include "../abstract.hpp"
 #include "parameter_proccess.h"
 
-#include "../routes.hpp"
+#include "../request/routes.hpp"
 #include "request.hpp"
 #include "../sysop/literals.h"
+#include "../sysop/sysprocess.h"
 #include "../sockets.h"
 #include "../threading/thread_pool.h"
 #include "../threading/task_manager.h"
 #include "fd_validate.h"
-#include "httpUtils.hpp"
+#include "../request/httpUtils.hpp"
+#include "../configuration.hpp"
 
-using std::make_shared, std::vector, std::unique_ptr;
+using std::make_shared, std::vector, std::unique_ptr, std::function;
 
 using RoutesMap = std::unordered_map<string, std::unique_ptr<listen_routes>>;
 /*
@@ -37,12 +40,15 @@ class RequestIO {
 
     shared_ptr<FdValidate> fd_validate;
     shared_ptr<RoutesMap>  routes;
-    shared_ptr<Server> connection;
     shared_ptr<threading::ThreadPool> thread_pool_;
 
     unordered_map<int, bool> closed_fd;
     size_t threads_{3};
     std::mutex mutex_fd;
+    neo::LISTEN_TYPE listen_type;
+    std::function<void()> step_process{};
+    std::atomic<int>  general_increment{};
+    std::function<void()> parent_callback = nullptr;
 
     void Process(int, const shared_ptr<std::vector<epoll_event>>& events);
     void ProcessFileDescriptor(int);
@@ -52,13 +58,12 @@ class RequestIO {
      RequestIO(const shared_ptr<RoutesMap> &,
                int &,
                int &,
-               const shared_ptr<Server>&);
-
-
+               neo::LISTEN_TYPE,
+               const std::function<void()> &);
 
     void Dispatch(int _list,   const shared_ptr<std::vector<epoll_event>>& events) ;
     void SetThreads(size_t size);
-    void ExecuteRoute(int client_fd, std::array<char, DEF_BUFFER_SIZE> buffer, const shared_ptr<RoutesMap> &routes) const;
+    void ExecuteRoute(int client_fd, const std::array<char, DEF_BUFFER_SIZE> &buffer, const shared_ptr<RoutesMap> &routes) const;
 
     static bool TimeGuard(const unique_ptr<listen_routes> & itr);
 

@@ -10,8 +10,14 @@
 #include "../sysop/literals.h"
 #include "../abstract.hpp"
 #include "../configuration.hpp"
+#include "../sockets.h"
 
 using namespace std::chrono;
+
+struct  FDInfo{
+    bool state{};
+    std::chrono::steady_clock::time_point last_active;
+};
 
 class FdValidate{
 
@@ -35,8 +41,7 @@ class FdValidate{
     bool isBusy(int client_fd) noexcept;
 
     void clearOldFd();
-
-
+    void retryBusyMessages();
     void add(int client_fd, epoll_event&)  noexcept;
 
 };

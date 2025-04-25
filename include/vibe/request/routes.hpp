@@ -11,15 +11,15 @@
 #include <future>
 #include <chrono>
 
-#include "request/request.hpp"
+#include "request.hpp"
 
-#include "files/basic_render.h"
-#include "files/cpp_reader.h"
-#include "files/mg_reader.h"
-#include "files/data_render.h"
-#include "files/json_legacy.hpp"
-#include "request/httpUtils.hpp"
-#include "request/headers.hpp"
+#include "../files/basic_render.h"
+#include "../files/cpp_reader.h"
+#include "../files/mg_reader.h"
+#include "../files/data_render.h"
+#include "../files/json_legacy.hpp"
+#include "../request/httpUtils.hpp"
+#include "../request/headers.hpp"
 
 using std::string;
 using namespace std::chrono;

@@ -72,14 +72,15 @@ class Server final : public Engine {
      int on() override;
      int Close() override;
 
-    [[maybe_unused]] [[nodiscard]] inline int getDescription() const {  return *socket_id;  }
+    [[maybe_unused]] [[nodiscard]] int getDescription() const {  return *socket_id;  }
     [[maybe_unused]]  shared_ptr<int> getSocketId() { return socket_id; }
     [[maybe_unused]]  void setSocketId(int const identity) { socket_id = std::make_shared<int>(identity); }
 
      void setSessions(int);
-     [[nodiscard]] bool sendResponse(const string&, int client_descriptor) const;
-     [[nodiscard]] bool queueResponseForSending(const string&, int client_descriptor) const;
+     [[nodiscard]] static bool sendResponse(const string&, int epoll_fd, int client_descriptor);
+     [[nodiscard]] static bool queueResponseForSending(const string&, int epoll_fd, int client_descriptor);
      static int setNonblocking(const int&);
+     static auto& getRetryQueue() { return retryQueue; }
 };
 
 

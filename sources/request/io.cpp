@@ -2,15 +2,32 @@
 
 RequestIO::RequestIO(const std::shared_ptr<RoutesMap> &routes,
                      int &filed,
-                     int &epoll_fd,
-                     const shared_ptr<Server> &con) : file_descriptor(std::make_unique<int>(filed)),
-                                                      epoll_fd(std::make_unique<int>(epoll_fd)),
-                                                      routes(routes),
-                                                      connection(con) {
+                     int &epoll_fd, const neo::LISTEN_TYPE _type,
+                     const std::function<void()> &callback
+                     ) : file_descriptor(std::make_unique<int>(filed)),
+                                                                                                              epoll_fd(std::make_unique<int>(epoll_fd)),
+                                                                                                              routes(routes), listen_type(_type){
 
     thread_pool_ = make_shared<threading::ThreadPool>(threads_);
     fd_validate = make_shared<FdValidate>(epoll_fd);
     taskManager = make_unique<TaskManager>(fd_validate);
+    parent_callback = callback;
+
+    if(_type == neo::UNIQUE) {
+
+        step_process = [&]() -> void {
+
+            general_increment.store(general_increment.load() + 1);
+
+            if(general_increment.load() == STEP_TO_KILL) {
+                if(parent_callback) {
+                    parent_callback();
+                }
+                taskManager->kill();
+                thread_pool_->kill();
+            }
+        };
+    }
 
 }
 
@@ -18,16 +35,16 @@ RequestIO::RequestIO(const std::shared_ptr<RoutesMap> &routes,
 
 void RequestIO::Dispatch(const int _list, const shared_ptr<std::vector<epoll_event>>& events)  {
 
-     const string key = std::to_string(process::random());
+    const string time_key = std::to_string(neosys::process::random());
 
-    taskManager->manage(key,  thread_pool_->addFutureTask([this, _list, events, key](const shared_ptr<std::promise<void>>& future)->void {
+    taskManager->manage(time_key,  thread_pool_->addFutureTask([this, _list, events, time_key](const shared_ptr<std::promise<void>>& future)->void {
 
                       this->Process(_list, events);
 
         future->set_value();
-        taskManager->releaseOne(key);
+        taskManager->releaseOne(time_key);
 
-     }));
+    }));
 
 }
 
@@ -123,15 +140,14 @@ void RequestIO::ProcessFileDescriptor(const int event_fd)  {
 
 
 
-void RequestIO::ExecuteRoute(const int client_fd, std::array<char, DEF_BUFFER_SIZE> buffer, const shared_ptr<RoutesMap> &routes) const
+void RequestIO::ExecuteRoute(const int client_fd, const std::array<char, DEF_BUFFER_SIZE> &buffer, const shared_ptr<RoutesMap> &routes) const
 {
 
-    string send_target = HttpUtils::create_response("<h1>error</h1>", "text/html");
+    string send_target = HttpUtils::create_response("<h1>the resource could not be accessed</h1>", "text/html");
 
     const string socket_response(buffer.begin(), buffer.size());
 
     if (socket_response.empty()) throw std::range_error(VB_SOCKET_FAIL);
-
 
     auto [type, route] = HTTP_QUERY::route_refactor(socket_response);
 
@@ -157,8 +173,10 @@ void RequestIO::ExecuteRoute(const int client_fd, std::array<char, DEF_BUFFER_SI
                               : HttpUtils::rate_limit_response(itr->second->time_key);
     }
 
-    if (const auto send_= connection->sendResponse(send_target, client_fd); !send_)
+    if (const auto send_= Server::sendResponse(send_target,*epoll_fd ,client_fd); !send_)
         terminal(VB_EPOLL_CERR, VB_SOCKET_SEND);
+
+    step_process();
 }
 
 
@@ -174,3 +192,5 @@ bool RequestIO::TimeGuard(const unique_ptr<listen_routes> &itr) {
 void RequestIO::SetThreads(size_t size) {
     thread_pool_ = make_shared<threading::ThreadPool>(size);
 }
+
+

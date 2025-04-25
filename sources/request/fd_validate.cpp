@@ -1,9 +1,9 @@
 #include "../../include/vibe/request/fd_validate.h"
 
-FdValidate::FdValidate(const int fd)
+FdValidate::FdValidate(const int _fd)
 {
     inuse_ = std::unordered_map<int,FDInfo>();
-    epoll_fd = fd;
+    epoll_fd = _fd;
 }
 FdValidate::~FdValidate()
 {
@@ -16,16 +16,16 @@ bool FdValidate::is_valid(const int fd) noexcept {
 }
 
 
-void FdValidate::disposeBase(const int fd) const {
+void FdValidate::disposeBase(const int client_fd) const {
 
-    if (!is_valid(fd) || fd == epoll_fd )
+    if (!is_valid(client_fd) || client_fd == epoll_fd )
         return;
 
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr) == -1) {
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, client_fd, nullptr) == -1) {
         terminal(VB_EPOLL_CERR,  "-dispose epoll FD-");
     }
 
-    if (::close(fd) == -1) {
+    if (::close(client_fd) == -1) {
         terminal(VB_EPOLL_CERR,  "-close epoll FD-");
     }
 }
@@ -97,6 +97,24 @@ void FdValidate::clearOldFd() {
             } else {
                 ++it;
             }
+    }
+}
+
+void FdValidate::retryBusyMessages() {
+
+    const auto queue = Server::getRetryQueue();
+
+    for (auto it = queue->begin(); it != queue->end(); ++it ) {
+        if(
+            auto [key, value] = *it;
+            !isBusy(key) && is_valid(key)
+          ) {
+            if (const bool result = Server::sendResponse(value, epoll_fd,key); !result) {
+                terminal(VB_EPOLL_CERR, VB_SOCKET_FAIL);
+            }
+            disposeBase(key);
+         }
+        queue->erase(it);
     }
 }
 

@@ -94,13 +94,13 @@ int Server::on() {
          return MG_OK;
 }
 
-bool Server::sendResponse(const string& _msg, const int client_descriptor) const
+bool Server::sendResponse(const string& _msg, int epoll_fd, const int client_descriptor)
 {
 
      if (const ssize_t bytes_sent = send(client_descriptor, _msg.c_str(), _msg.size(), MSG_NOSIGNAL); bytes_sent == -1) {
 
           if (errno == EAGAIN || errno == EWOULDBLOCK) {
-               return queueResponseForSending(_msg, client_descriptor);
+               return queueResponseForSending(_msg,epoll_fd ,client_descriptor);
           }
 
                terminal(VB_SOCKET_FAIL, strerror(errno));
@@ -109,13 +109,13 @@ bool Server::sendResponse(const string& _msg, const int client_descriptor) const
                return false;
 
      } else if (bytes_sent < static_cast<ssize_t>(_msg.size())) {
-          return queueResponseForSending(_msg.substr(bytes_sent), client_descriptor);
+          return queueResponseForSending(_msg.substr(bytes_sent), epoll_fd,client_descriptor);
      }
 
      return true;
 }
 
-bool Server::queueResponseForSending(const string& remaining_data, int client_descriptor) const
+bool Server::queueResponseForSending(const string& remaining_data, const int epoll_fd,int client_descriptor)
 {
 
      epoll_event event{};
