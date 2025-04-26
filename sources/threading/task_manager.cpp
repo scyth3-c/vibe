@@ -13,17 +13,20 @@ TaskManager::TaskManager(const shared_ptr<FdValidate>& fv): fd_validate_(fv){
             if (stop_ && futures_.empty()) break;
             if(futures_.empty()) continue;
 
+            std::unique_lock<mutex> lock(manage_lock);
             for(auto it = futures_.begin(); it != futures_.end();) {
-
                 if(it->second.first.valid() && it->second.second) {
 
                     it->second.first.get();
-                    it = futures_.erase(it);
 
-                }else {
+                    if(futures_.find(it->first) != futures_.end()) {
+                        it = futures_.erase(it);
+                    }
+                   }else {
                     ++it;
                 }
             }
+            lock.unlock();
 
             fd_validate_->clearOldFd();
             fd_validate_->retryBusyMessages();
@@ -51,6 +54,7 @@ void TaskManager::manage(const std::string& key, future<void> task)
 
 void TaskManager::releaseOne(const string& key)
 {
+
     std::lock_guard<mutex> lock(manage_lock);
     if (futures_.find(key) == futures_.end()) return;
 

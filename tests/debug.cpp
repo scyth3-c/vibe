@@ -11,8 +11,7 @@ int main() {
         web.send("Hello World, Debug 1");
     }});
 
-    router.listenOne();
-
+    router.listen();
 
     return 0;
 }
