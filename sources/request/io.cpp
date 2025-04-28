@@ -13,6 +13,8 @@ RequestIO::RequestIO(const std::shared_ptr<RoutesMap> &routes,
     taskManager = make_unique<TaskManager>(fd_validate);
     parent_callback = callback;
 
+    step_process = []()->void {};
+
     if(_type == neo::UNIQUE) {
 
         step_process = [&]() -> void {
@@ -39,51 +41,52 @@ void RequestIO::Dispatch(const int _list, const shared_ptr<std::vector<epoll_eve
 
     taskManager->manage(time_key,  thread_pool_->addFutureTask([this, _list, events, time_key](const shared_ptr<std::promise<void>>& future)->void {
 
-                      this->Process(_list, events);
-
+                      this->Process(_list,  time_key, events);
         future->set_value();
-        taskManager->releaseOne(time_key);
 
     }));
 
 }
 
 
-void RequestIO::Process(const int list, const shared_ptr<std::vector<epoll_event>>& events)  {
-
+void RequestIO::Process(const int list, const string& key, const shared_ptr<std::vector<epoll_event>>& events) {
     constexpr auto socket_len_error_value = static_cast<socklen_t>(-1);
 
-    for (int i = 0; i < list ; i++) {
+    for (int i = 0; i < list; i++) {
+        const int event_fd = events->operator[](i).data.fd;
 
-        if (const int event_fd = events->operator[](i).data.fd;
-            event_fd == *file_descriptor
-        ) {
+        if (event_fd == *file_descriptor) {
 
-            sockaddr_in client_addr{};
-            socklen_t client_address_len = sizeof(client_addr);
+            while (true) {
+                sockaddr_in client_addr{};
+                socklen_t client_address_len = sizeof(client_addr);
+                int client_fd = accept(*file_descriptor,
+                                       reinterpret_cast<sockaddr*>(&client_addr),
+                                       &client_address_len);
 
-            int client_file_descriptor = accept(*file_descriptor, reinterpret_cast<sockaddr *>(&client_addr),
-                                                &client_address_len);
+                if (client_fd == VB_NVALUE) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        break;
+                    }
+                    terminal(VB_EPOLL_CERR, strerror(errno));
+                    break;
+                }
 
-            if (client_address_len == socket_len_error_value)
-                continue;
+                if (client_address_len == socket_len_error_value) {
+                    ::close(client_fd);
+                    continue;
+                }
 
-            if (client_file_descriptor  == VB_NVALUE) {
-              if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EBADF)
-                  continue;
-              terminal(VB_EPOLL_CERR, errno);
+                if (Server::setNonblocking(client_fd) != MG_OK) {
+                    ::close(client_fd);
+                    continue;
+                }
+
+                epoll_event ev{};
+                ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+                ev.data.fd = client_fd;
+                fd_validate->add(client_fd, ev);
             }
-
-            if (Server::setNonblocking(client_file_descriptor) != MG_OK) {
-                close(client_file_descriptor);
-                continue;
-            }
-
-            epoll_event ev{};
-            ev.events = EPOLLIN | EPOLLET;
-            ev.data.fd = client_file_descriptor;
-
-            fd_validate->add(client_file_descriptor, ev);
 
         } else {
 
@@ -93,54 +96,72 @@ void RequestIO::Process(const int list, const shared_ptr<std::vector<epoll_event
 
             fd_validate->busy(event_fd);
 
-            ProcessFileDescriptor(event_fd);
-
+           const auto state =  ProcessFileDescriptor(event_fd, key);
             fd_validate->unBusy(event_fd);
-            fd_validate->dispose(event_fd);
+            // fd_validate->dispose(event_fd);
+            if (state)
+                fd_validate->rearm(event_fd);
+            else
+                fd_validate->disposeBase(event_fd);
 
+            // fd_validate->dispose(event_fd);
+
+            // epoll_event ev{};
+            // ev.events  = EPOLLIN | EPOLLET | EPOLLONESHOT;
+            // ev.data.fd = event_fd;
+            // if (epoll_ctl(*file_descriptor, EPOLL_CTL_MOD, event_fd, &ev) == -1) {
+            //     terminal(VB_EPOLL_CERR, strerror(errno));
+            //     fd_validate->dispose(event_fd);
+            // }
         }
-
     }
 }
 
 
 
 
-void RequestIO::ProcessFileDescriptor(const int event_fd)  {
-
+bool RequestIO::ProcessFileDescriptor(const int event_fd, const string& key) {
 
     std::lock_guard<std::mutex> guard{mutex_fd};
     if (!FdValidate::is_valid(event_fd)) {
-        return;
+        return false;
     }
 
+    std::vector<char> recvBuffer;
     std::array<char, DEF_BUFFER_SIZE> buffer{};
 
-    if (const ssize_t bytes = recv(event_fd, buffer.data(), buffer.size(), VB_OK); bytes == VB_NVALUE)
-    {
-        if (errno == EWOULDBLOCK)
-            return;
-
-        terminal(VB_EPOLL_CERR, strerror(errno));
-
-        fd_validate->disposeBase(event_fd);
-
-
-    } else if (bytes == VB_OK) {
-
-        fd_validate->disposeBase(event_fd);
-
-    } else {
-
-        ExecuteRoute(event_fd, buffer, routes);
+    while (true) {
+        const ssize_t bytes = recv(event_fd, buffer.data(), buffer.size(), VB_OK);
+        if (bytes == VB_NVALUE) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break;
+            }
+            terminal(VB_EPOLL_CERR, strerror(errno));
+            // fd_validate->dispose(event_fd);
+            return false;
+        } else if (bytes == 0) {
+            // fd_validate->dispose(event_fd);
+            return false;
+        }
+        recvBuffer.insert(recvBuffer.end(), buffer.begin(), buffer.begin() + bytes);
     }
+    if (recvBuffer.empty()) {
+        return false;
+    }
+
+    std::array<char, DEF_BUFFER_SIZE> requestArray{};
+    const size_t len = std::min(recvBuffer.size(), requestArray.size());
+    std::copy_n(recvBuffer.data(), len, requestArray.data());
+
+    return ExecuteRoute(event_fd, key, requestArray, routes);
 }
 
 
 
 
 
-void RequestIO::ExecuteRoute(const int client_fd, const std::array<char, DEF_BUFFER_SIZE> &buffer, const shared_ptr<RoutesMap> &routes) const
+
+bool RequestIO::ExecuteRoute(const int client_fd, const string& key, const std::array<char, DEF_BUFFER_SIZE> &buffer, const shared_ptr<RoutesMap> &routes) const
 {
 
     string send_target = HttpUtils::create_response("<h1>the resource could not be accessed</h1>", "text/html");
@@ -175,8 +196,12 @@ void RequestIO::ExecuteRoute(const int client_fd, const std::array<char, DEF_BUF
 
     if (const auto send_= Server::sendResponse(send_target,*epoll_fd ,client_fd); !send_)
         terminal(VB_EPOLL_CERR, VB_SOCKET_SEND);
+    else
+        taskManager->releaseOne(key);
 
     step_process();
+
+    return true;
 }
 
 

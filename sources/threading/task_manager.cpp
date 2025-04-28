@@ -28,7 +28,7 @@ TaskManager::TaskManager(const shared_ptr<FdValidate>& fv): fd_validate_(fv){
             }
             lock.unlock();
 
-            fd_validate_->clearOldFd();
+            // fd_validate_->clearOldFd();
             fd_validate_->retryBusyMessages();
         }
     });
@@ -62,12 +62,3 @@ void TaskManager::releaseOne(const string& key)
     condition_.notify_all();
 
 }
-
-void TaskManager::dispose()
-{
-    std::unique_lock<mutex> lock(manage_lock);
-    condition_.notify_all();
-}
-
-
-

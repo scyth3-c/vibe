@@ -43,15 +43,15 @@ class RequestIO {
     shared_ptr<threading::ThreadPool> thread_pool_;
 
     unordered_map<int, bool> closed_fd;
-    size_t threads_{3};
+    size_t threads_{THREADS};
     std::mutex mutex_fd;
     neo::LISTEN_TYPE listen_type;
     std::function<void()> step_process{};
     std::atomic<int>  general_increment{};
     std::function<void()> parent_callback = nullptr;
 
-    void Process(int, const shared_ptr<std::vector<epoll_event>>& events);
-    void ProcessFileDescriptor(int);
+    void Process(int,const string&,const shared_ptr<std::vector<epoll_event>>& events);
+    bool ProcessFileDescriptor(int,const string&);
 
     public:
 
@@ -63,7 +63,7 @@ class RequestIO {
 
     void Dispatch(int _list,   const shared_ptr<std::vector<epoll_event>>& events) ;
     void SetThreads(size_t size);
-    void ExecuteRoute(int client_fd, const std::array<char, DEF_BUFFER_SIZE> &buffer, const shared_ptr<RoutesMap> &routes) const;
+    bool ExecuteRoute(int client_fd, const string& key, const std::array<char, DEF_BUFFER_SIZE> &buffer, const shared_ptr<RoutesMap> &routes) const;
 
     static bool TimeGuard(const unique_ptr<listen_routes> & itr);
 

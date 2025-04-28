@@ -8,11 +8,12 @@ using enums::neo;
 
 
 // router epoll configuration
+constexpr int THREADS = 16;
 constexpr int BUFFER = neo::eSize::BUFFER;
 constexpr int SESSION = neo::eSize::SESSION;
-constexpr int INIT_MAX_EVENTS = 256;
+constexpr int INIT_MAX_EVENTS = 1024;
 constexpr int CLOCK_SPEED = 5;
-constexpr int TIMEOUT_LIMIT_SECONDS = 1800;
+constexpr int TIMEOUT_LIMIT_SECONDS = 10;
 constexpr int STEP_TO_KILL = 1; // n request  before kill process for router.listenOne()
 constexpr int SLEEP_AFTER_KILL_IN_MS = 20; // timeout after killing the process using .listenOne() in MS
 

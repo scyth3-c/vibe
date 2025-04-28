@@ -43,6 +43,7 @@ class FdValidate{
     void clearOldFd();
     void retryBusyMessages();
     void add(int client_fd, epoll_event&)  noexcept;
+    void rearm(int client_fd);
 
 };
 
