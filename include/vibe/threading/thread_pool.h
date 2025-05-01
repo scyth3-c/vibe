@@ -11,6 +11,7 @@
 #include <thread>
 #include <memory>
 #include "../abstract.hpp"
+#include "../configuration.hpp"
 
 
 namespace threading {
@@ -20,24 +21,24 @@ namespace threading {
 
     class ThreadPool {
 
-        vector<thread> threads_;
+        void init();
+
         size_t size_;
+        size_t max_queue_size_;
+        std::atomic<bool> stop_{false};
 
-        queue<function<void()>> queue_;
-        atomic<bool> stop_;
-
-        mutex mutex_;
-        condition_variable condition_;
+        std::mutex mutex_;
+        std::condition_variable cond_not_empty_;
+        std::condition_variable cond_not_full_;
+        std::queue<std::function<void()>> queue_;
+        std::vector<std::thread> threads_;
 
     public:
 
-       explicit ThreadPool(size_t threads = 4);
+        ThreadPool(size_t threads, size_t max_queue_size);
         ~ThreadPool();
-
-        future<void> addFutureTask(const std::function<void(shared_ptr<promise<void>>)>& task);
-        void addTask(const std::function<void()>&task);
-
-        void init();
+        std::future<void> addFutureTask(const std::function<void(std::shared_ptr<std::promise<void>>)> &task);
+        void addTask(const std::function<void()> &task);
         void kill();
 
     };

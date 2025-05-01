@@ -3,103 +3,91 @@
 #include <iostream>
 using namespace threading;
 
-ThreadPool::ThreadPool(const size_t threads ) : size_(threads), stop_(false) {
+ThreadPool::ThreadPool(size_t threads, size_t max_queue_size)
+    : size_(threads), max_queue_size_(max_queue_size) {
     init();
 }
 
 ThreadPool::~ThreadPool() {
-  kill();
+    kill();
 }
 
+std::future<void> ThreadPool::addFutureTask(const std::function<void(std::shared_ptr<std::promise<void>>)> &task) {
+    auto promise_ptr = std::make_shared<std::promise<void>>();
+    std::future<void> fut = promise_ptr->get_future();
 
-future<void> ThreadPool::addFutureTask(const std::function<void(shared_ptr<promise<void>>)>& task) {
-
-  auto future_capsule = make_shared<std::promise<void>>();
-  {
-    std::unique_lock<mutex> lock(mutex_);
-    if(stop_.load())
-      throw std::runtime_error("ThreadPool::addTask: stopped");
-
-    queue_.emplace([future_capsule, task]() {
-      try {
-        task(future_capsule);
-      }catch (...) {
-        future_capsule->set_exception(std::current_exception());
-      }
+    std::unique_lock<std::mutex> lock(mutex_);
+    // Espera hasta que haya espacio en la cola
+    cond_not_full_.wait(lock, [this] {
+        return stop_ || queue_.size() < max_queue_size_;
     });
-  }
-  condition_.notify_one();
-  return future_capsule->get_future();
+    if (stop_) {
+        throw std::runtime_error("ThreadPool::addFutureTask: stopped");
+    }
+
+    // Encapsular la tarea
+    queue_.emplace([promise_ptr, task] {
+        try {
+            task(promise_ptr);
+        } catch (...) {
+            promise_ptr->set_exception(std::current_exception());
+        }
+    });
+
+    // Notificar al hilo trabajador
+    cond_not_empty_.notify_one();
+    return fut;
 }
 
+void ThreadPool::addTask(const std::function<void()> &task) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    cond_not_full_.wait(lock, [this] {
+        return stop_ || queue_.size() < max_queue_size_;
+    });
+    if (stop_) {
+        throw std::runtime_error("ThreadPool::addTask: stopped");
+    }
 
-void ThreadPool::addTask(const std::function<void()>&task) {
-
-  std::unique_lock<mutex> lock(mutex_);
-
-  if(stop_.load())
-    throw std::runtime_error("ThreadPool::addTask: stopped");
-
-  queue_.emplace(task);
-  condition_.notify_one();
-
+    queue_.emplace(task);
+    cond_not_empty_.notify_one();
 }
 
 void ThreadPool::init() {
+    if (!threads_.empty()) return;
 
-  if(!threads_.empty())
-      return;
-
-  for (size_t i = 0; i < size_; i++) {
-    threads_.emplace_back([this]() {
-       while(!stop_){
-         std::function<void()> task;
-         {
-               std::unique_lock<std::mutex> lock(mutex_);
-               this->condition_.wait(lock, [this] { return this->stop_ || !this->queue_.empty();});
-
-               if(this->stop_)
-                 return;
-
-              if (!this->queue_.empty())
-              {
-
-                task = std::move(this->queue_.front());
-
-                if (task == nullptr)
-                  continue;
-                queue_.pop();
-
-              }
-         }
-
-       if(task)
-       {
-         try
-         {
-           task();
-         }catch (std::exception &e) {
-            std::cout << e.what() << std::endl;
-         }
-       }
-       }
-    });
-  }
+    for (size_t i = 0; i < size_; ++i) {
+        threads_.emplace_back([this] {
+            while (true) {
+                std::function<void()> job;
+                {
+                    std::unique_lock<std::mutex> lock(mutex_);
+                    cond_not_empty_.wait(lock, [this] {
+                        return stop_ || !queue_.empty();
+                    });
+                    if (stop_ && queue_.empty()) {
+                        return;
+                    }
+                    job = std::move(queue_.front());
+                    queue_.pop();
+                    // Avisar a productores de espacio libre
+                    cond_not_full_.notify_one();
+                }
+                if (job) job();
+            }
+        });
+    }
 }
-
 
 void ThreadPool::kill() {
-
-  {
-    std::unique_lock<std::mutex> lock(mutex_);
-    stop_ = true;
-  }
-
-  stop_.store(true);
-  condition_.notify_all();
-
-  for(thread &thread : threads_)
-    if(thread.joinable())
-      thread.join();
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        stop_ = true;
+    }
+    cond_not_empty_.notify_all();
+    cond_not_full_.notify_all();
+    for (auto &t : threads_) {
+        if (t.joinable()) t.join();
+    }
 }
 
+// namespace threading

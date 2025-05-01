@@ -8,7 +8,7 @@ RequestIO::RequestIO(const std::shared_ptr<RoutesMap> &routes,
                                                                                                               epoll_fd(std::make_unique<int>(epoll_fd)),
                                                                                                               routes(routes), listen_type(_type){
 
-    thread_pool_ = make_shared<threading::ThreadPool>(threads_);
+    thread_pool_ = make_shared<threading::ThreadPool>(threads_, 200);
     fd_validate = make_shared<FdValidate>(epoll_fd);
     taskManager = make_unique<TaskManager>(fd_validate);
     parent_callback = callback;
@@ -215,7 +215,7 @@ bool RequestIO::TimeGuard(const unique_ptr<listen_routes> &itr) {
 }
 
 void RequestIO::SetThreads(size_t size) {
-    thread_pool_ = make_shared<threading::ThreadPool>(size);
+    thread_pool_ = make_shared<threading::ThreadPool>(size, 128);
 }
 
 
