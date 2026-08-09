@@ -330,8 +330,11 @@ inline int HTTP::post(POST *fields, const VHeaders &headers, const string& endpo
 	curl_easy_setopt(*curl, CURLOPT_WRITEFUNCTION, HTTP::callback);
 	curl_easy_setopt(*curl, CURLOPT_WRITEDATA, &response);
 
+    // NOTE: CURLOPT_POSTFIELDS does not copy the data: the string must stay
+    // alive until after curl_easy_perform.
+    string postFields;
     if(fields != nullptr) {
-	    const auto postFields = fields->transform();
+	    postFields = fields->transform();
         curl_easy_setopt(*curl, CURLOPT_POSTFIELDS, postFields.c_str());
         fields = nullptr;
     }

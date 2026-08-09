@@ -3,7 +3,9 @@
 //
 
 #include "../include/vibe/util/sysprocess.h"
+#include <algorithm>
 #include <iostream>
+#include <iterator>
 
 #include "../include/vibe/util/nterminal.h"
 
@@ -78,13 +80,15 @@ int neosys::process::run_command(const std::vector<const char*> &args, const std
 
 
 std::string neosys::process::readFile(const std::string &path, char separator) {
-    std::ifstream reader(path);
-    std::string line, body;
+    std::ifstream reader(path, std::ios::binary);
+    if (!reader.is_open())
+        return {};
 
-    while (getline(reader, line))
-        body += line;
-    reader.close();
-    reader.clear();
+    std::string body{std::istreambuf_iterator<char>(reader), std::istreambuf_iterator<char>()};
+
+    if (separator != '\0')
+        std::replace(body.begin(), body.end(), '\n', separator);
+
     return body;
 }
 

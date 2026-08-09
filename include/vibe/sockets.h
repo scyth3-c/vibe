@@ -22,6 +22,11 @@
 #include <vector>
 #include <array>
 #include <mutex>
+#include <charconv>
+#include <chrono>
+#include <string_view>
+
+#include "http/response.hpp"
 
 using std::string;
 using std::shared_ptr;
@@ -89,12 +94,14 @@ class Server final : public Engine {
      shared_ptr<string> buffereOd_data;
      shared_ptr
                <int> static_sessions = make_shared<int>(10);
-    int epoll_fd, notices;
+     int epoll_fd, notices;
 
-    std::vector<epoll_event> events;
+     int write_timeout_ms = 5000;
+
+     std::vector<epoll_event> events;
 
   public:
-     
+
      explicit Server(uint16_t const Port) : Engine(Port), epoll_fd(-1), notices(-1) {}
      Server() : Engine(DEFAULT_PORT), epoll_fd(-1), notices(-1){}
 
@@ -102,13 +109,18 @@ class Server final : public Engine {
      int on() override;
      int Close() override;
 
-    [[maybe_unused]] [[nodiscard]] inline int getDescription() const {  return *socket_id;  }
-    [[maybe_unused]] inline shared_ptr<int> getSocketId() { return socket_id; }
-    [[maybe_unused]] inline void setSocketId(int const identity) { socket_id = std::make_shared<int>(identity); }
+     [[maybe_unused]] [[nodiscard]] inline int getDescription() const {  return *socket_id;  }
+     [[maybe_unused]] inline shared_ptr<int> getSocketId() { return socket_id; }
+     [[maybe_unused]] inline void setSocketId(int const identity) { socket_id = std::make_shared<int>(identity); }
 
      void setSessions(int);
+     // Inactivity timeout while writing the response to the client.
+     inline void setWriteTimeout(const std::chrono::milliseconds timeout) noexcept {
+          write_timeout_ms = static_cast<int>(timeout.count());
+     }
      void sendResponse(const string&) const;
      void setResponse(const std::array<char, DEF_BUFFER_SIZE> &buffer);
+     void setResponse(const string &data);
 
      inline void setEpollEvents(std::vector<epoll_event> const &e){events = e;}
      inline void setEpollfd(int const arg) noexcept { epoll_fd = arg; }
@@ -122,7 +134,7 @@ class Server final : public Engine {
      static int setNonblocking(const int&);
 
      [[nodiscard]] inline string getResponse()  const override {
-           return *buffereOd_data;
+           return buffereOd_data != nullptr ? *buffereOd_data : string{};
       }
 };
 
@@ -135,37 +147,53 @@ struct [[maybe_unused]] WEB {
     explicit WEB()= default;
 
     [[maybe_unused]] static string json(const string& _txt, const string& status="200 OK") {
-        std::stringstream base;
-        base
-        << "HTTP/1.1 " << status <<"\n"
-        << "Server: Vibe/1.0\n"
-        << "Content-Type: " << JSON <<"\n"
-        << "Content-Length: " << std::to_string(_txt.length()) << "\n"
-        << "Accept-Ranges: bytes\n"
-        << "Connection: close\n"
-        << "\n"
-        << _txt;
-
-      return  base.str();
+        return vibe::http::Response{}
+            .status(status_code_of(status))
+            .type("application/json")
+            .body(_txt)
+            .str();
      }
 
 
     [[maybe_unused]] static string custom(const string& _txt, const string& type, const string& headers,  const string& status="200 OK"){
 
-        std::stringstream base;
-        base
-        << "HTTP/1.1 " << status << "\n"
-        << "Server: Vibe/1.0\n"
-        << "Content-Type: " << type << "\n"
-        << "Content-Length: " << std::to_string(_txt.length()) << "\n"
-        << "Accept-Ranges: bytes\n"
-        << headers
-        << "Connection: close\n"
-        << "\n"
-        <<_txt;
+        vibe::http::Response response;
+        response.status(status_code_of(status)).type(type);
 
-           return base.str();
-     }     
+        size_t pos = 0;
+        while (pos < headers.size()) {
+            const size_t eol = headers.find('\n', pos);
+            std::string_view line = std::string_view(headers).substr(
+                pos, eol == string::npos ? eol : eol - pos);
+
+            if (const size_t colon = line.find(':'); colon != std::string_view::npos && colon > 0) {
+                std::string_view value = line.substr(colon + 1);
+                if (!value.empty() && value.front() == ' ')
+                    value.remove_prefix(1);
+                if (!value.empty() && value.back() == '\r')
+                    value.remove_suffix(1);
+                response.set(line.substr(0, colon), value);
+            }
+
+            if (eol == string::npos)
+                break;
+            pos = eol + 1;
+        }
+
+        return response.body(_txt).str();
+     }
+
+private:
+    // Legacy signature passes the status as a string ("200", "200 OK").
+    static int status_code_of(const string& status) {
+        int code = 200;
+        const char* first = status.data();
+        const char* last  = first + status.size();
+        if (const auto [ptr, ec] = std::from_chars(first, last, code);
+            ec == std::errc{} && ptr != first)
+            return code;
+        return 200;
+    }
 };
 
 template<class...P>

@@ -15,6 +15,8 @@ constexpr auto UNLINK_TYPE = "UNLINK";
 constexpr auto PURGE_TYPE = "PURGE";
 
 constexpr auto X_WWW_FORM = "application/x-www-form-urlencoded";
+constexpr auto MULTIPART_FORM = "multipart/form-data";
+constexpr auto JSON_APP = "application/json";
 constexpr auto PLAIN_TEXT = "text/plain";
 constexpr auto RAW_ERROR = "data=null";
 constexpr auto RAW_TARGET = "data=";
@@ -25,6 +27,7 @@ constexpr auto RAW_TARGET = "data=";
 #include <string>
 
 #include "../request/request.hpp"
+#include "../http/message.hpp"
 
 using std::string;
 using std::make_shared;
@@ -36,7 +39,7 @@ class HTTP_QUERY
 public:
     HTTP_QUERY();
     ~HTTP_QUERY();
-    
+
    [[nodiscard]] static string route_refactor_params(const string&);
    [[nodiscard]] static string route_refactor_params_get(const string&);
    [[nodiscard]] static string headers_from(const string&);

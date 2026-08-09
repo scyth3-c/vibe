@@ -1,29 +1,39 @@
 #include "../../include/vibe/threading/thread_pool.h"
 
+#include <iostream>
+
 using namespace threading;
 
-ThreadPool::ThreadPool(const size_t threads) : size_(threads), stop_(false) {
+ThreadPool::ThreadPool(const size_t threads) : size_(threads == 0 ? 1 : threads), stop_(false) {
 
-  for (size_t i = 0; i < threads; i++) {
+  for (size_t i = 0; i < size_; i++) {
 
     threads_.emplace_back([this]() {
 
-       while(static_cast<bool>(enums::neo::eStatus::START)){
+       while(true){
 
          std::function<void()> task;
 
          {
                std::unique_lock<std::mutex> lock(mutex_);
-               this->condition_.wait(lock, [this] { return this->stop_ || !this->queue_.empty();});
+               this->condition_.wait(lock, [this] { return this->stop_.load() || !this->queue_.empty();});
 
-               if(this->stop_ && this->queue_.empty())
+               if(this->stop_.load() && this->queue_.empty())
                  return;
 
                task = std::move(this->queue_.front());
                this->queue_.pop();
          }
 
-         task();
+         // A task must never escape an exception: it would call std::terminate
+         // and kill the whole process.
+         try {
+            task();
+         } catch (const std::exception &e) {
+            std::cerr << "ThreadPool: task exception: " << e.what() << '\n';
+         } catch (...) {
+            std::cerr << "ThreadPool: unknown task exception\n";
+         }
 
        }
     });
@@ -35,7 +45,8 @@ ThreadPool::~ThreadPool() {
     stop_.store(true);
     condition_.notify_all();
     for(thread &thread : threads_)
-      thread.join();
+      if(thread.joinable())
+        thread.join();
 }
 
 

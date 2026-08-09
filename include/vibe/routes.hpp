@@ -4,6 +4,8 @@
 
 #include <string>
 
+#include <memory>
+#include <mutex>
 #include <utility>
 #include <vector>
 #include <initializer_list>
@@ -12,6 +14,8 @@
 
 
 #include "request/request.hpp"
+#include "http/message.hpp"
+#include "util/mime_types.hpp"
 
 #include "util/basic_render.h"
 #include "util/cpp_reader.h"
@@ -85,13 +89,15 @@ class Query {
     [[maybe_unused]] void    setHeaders(const string&) noexcept;
     [[maybe_unused]] void    guard(const long&, string custom_msg="") noexcept;
 
-
     //  PARAMS:  CONTENT OPTIONAL CALLBACK
 
     [[maybe_unused]] void    json(const string&, const std::function<void()>& callback=[]()->void{}) noexcept;
     [[maybe_unused]] void    html(const string&, const std::function<void()>& callback=[]()->void{}) noexcept;
     [[maybe_unused]] void    send(const string&, const std::function<void()>& callback=[]()->void{}) noexcept;
     [[maybe_unused]] void    readFile(const string&,const string&, const std::function<void()>& callback=[]()->void{}) noexcept;
+    // Serves a file detecting the Content-Type from its extension.
+    [[maybe_unused]] void    readFile(const string&, const std::function<void()>& callback=[]()->void{}) noexcept;
+    [[maybe_unused]] void    file(const string&, const std::function<void()>& callback=[]()->void{}) noexcept;
     [[maybe_unused]] void    readFileX(const string&,const string&, const std::function<void()>& callback=[]()->void{}) noexcept;
     [[maybe_unused]] void    compose(const string&,int, const std::function<void()>& callback=[]()->void{}) noexcept;
     [[maybe_unused]] void    render(const string&, const std::function<dataRender(dataRender&)>& callback=[](dataRender&)->dataRender{ return dataRender(nullptr); }) noexcept;
@@ -112,18 +118,18 @@ struct Core_init_t  {
     [[maybe_unused]] Core_init_t() = default;
 
     std::vector<P...> functions;
-    Query *remote_control{};
 
     [[nodiscard]] [[maybe_unused]] inline size_t size() const noexcept { return functions.size(); }
 
-     std::pair<string, std::chrono::duration<double>::rep> execute(string _raw, string headers, std::unique_ptr<string> &guard_msg) {
-        remote_control = new Query();
+     std::pair<string, std::chrono::duration<double>::rep> execute(const vibe::http::Message &message,
+                                                                   std::unique_ptr<string> &guard_msg) {
+        // A fresh Query per request: execute() can run concurrently on several
+        // worker threads for the same route, so no state may live in members.
+        auto remote_control = std::make_unique<Query>();
 
         string response{};
 
-        remote_control->body.clear_parameters();
-        remote_control->body.setRawParametersData(std::move(_raw));
-        remote_control->body.setRawHeadersData(std::move(headers));
+        remote_control->body.consume(message);
 
         // middlewares execution
         for (size_t i = 0; i < functions.size(); i++) {
@@ -141,7 +147,6 @@ struct Core_init_t  {
         if(time_key > 0)
             guard_msg = std::make_unique<string>(remote_control->getGuardMsg());
 
-        delete remote_control;
         return {response, time_key};
     }
 };
@@ -160,6 +165,8 @@ struct listen_routes {
     std::chrono::duration<double>::rep time_key;
     std::chrono::time_point<std::chrono::system_clock> time_point{};
     std::unique_ptr<string> guardRouteMsg = nullptr;
+    // Guards time_key / time_point / guardRouteMsg: requests are served concurrently.
+    std::mutex route_mutex;
 };
 
 struct Route_t {

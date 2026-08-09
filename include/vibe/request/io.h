@@ -10,10 +10,12 @@
 #include <netinet/in.h>
 #include <unordered_map>
 #include <atomic>
+#include <thread>
 
 #include "../util/enums.h"
 #include "../util/parameter_proccess.h"
 
+#include "../config.hpp"
 #include "../routes.hpp"
 #include "request.hpp"
 #include "../util/nterminal.h"
@@ -28,6 +30,10 @@ using RoutesMap = std::unordered_map<string, std::unique_ptr<listen_routes>>;
  */
 class RequestIO {
 
+    public:
+
+     enum class ReadStatus { Ok, TooLarge, Failed };
+
     private:
     shared_ptr<std::vector<epoll_event>> events;
     shared_ptr<RoutesMap>  routes;
@@ -35,12 +41,23 @@ class RequestIO {
     unique_ptr<int> epoll_fd;
     shared_ptr<Server> connection;
 
+    vibe::Config config_{};
+
     shared_ptr<threading::ThreadPool> thread_pool_;
 
-    size_t threads_{4};
+    size_t threads_{[this] {
+        if (config_.threads != 0)
+            return config_.threads;
+        const unsigned int cores = std::thread::hardware_concurrency();
+        return static_cast<size_t>(cores == 0 ? 8 : cores);
+    }()};
 
-    void Process(int, epoll_event&) const;
-    void ProcessFileDescriptor(int, int) const;
+    // Accepts every pending connection (the listen socket is nonblocking).
+    void AcceptPending() const;
+    // Worker entry point: owns event_fd exclusively (already removed from epoll).
+    void HandleClient(int event_fd) const;
+    // Reads a complete HTTP request from a nonblocking fd.
+    ReadStatus ReadRequest(int event_fd, string &out) const;
 
     public:
 
@@ -48,10 +65,11 @@ class RequestIO {
                const shared_ptr<RoutesMap> &,
                int &,
                int &,
-               const shared_ptr<Server>&);
+               const shared_ptr<Server>&,
+               const vibe::Config &config = {});
 
 
-    void Dispatch(int id, epoll_event &event) const;
+    void Dispatch(int notice) const;
     void SetThreads(size_t size);
 
     static bool TimeGuard(const RoutesMap::const_iterator & itr);

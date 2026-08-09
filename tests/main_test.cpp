@@ -237,3 +237,186 @@ TEST_F(TestSuite, TestParametersPost) {
      EXPECT_EQ(res, "success");
  }
 
+
+TEST_F(TestSuite, TestQueryDecoding) {
+
+     Router router;
+     router.setPort(8080);
+
+     router.get("/",{[&](Query &web) {
+       auto params = web.body.getParameters();
+       web.send(params.get("name").value);
+   }});
+     ISOLATE(
+       router.listenOne();
+     )
+
+     const string res = http->get("/?name=hello%20world+vibe");
+     isolate_method.get();
+
+     EXPECT_EQ(res, "hello world vibe");
+ }
+
+
+TEST_F(TestSuite, TestTypedParameter) {
+
+     Router router;
+     router.setPort(8080);
+
+     router.get("/",{[&](Query &web) {
+       auto params = web.body.getParameters();
+       web.send(std::to_string(params.get("id").as<int>() * 2));
+   }});
+     ISOLATE(
+       router.listenOne();
+     )
+
+     const string res = http->get("/?id=21");
+     isolate_method.get();
+
+     EXPECT_EQ(res, "42");
+ }
+
+
+TEST_F(TestSuite, TestJsonBody) {
+
+     Router router;
+     router.setPort(8080);
+
+     router.post("/",{[&](Query &web) {
+       const string legacy_data = web.body.getParameters().get("data").value;
+       web.send(web.body.raw() + "|" + legacy_data + "|" + string(web.body.contentType()));
+   }});
+     ISOLATE(
+       router.listenOne();
+     )
+
+     const string json_body = R"json({"lang":"c++","level":20})json";
+     POST fields = { json_body };
+     VHeaders hdrs = { "Content-Type: application/json" };
+
+     const string res = http->post(fields, hdrs, "/");
+     isolate_method.get();
+
+     EXPECT_EQ(res, json_body + "|" + json_body + "|application/json");
+ }
+
+
+TEST_F(TestSuite, TestMultipartForm) {
+
+     Router router;
+     router.setPort(8080);
+
+     router.post("/",{[&](Query &web) {
+       auto params = web.body.getParameters();
+       const auto* uploaded = web.body.file("doc");
+       if (uploaded == nullptr) return web.send("no file");
+       web.send(params.get("title").value + "|" + uploaded->filename + "|" + uploaded->content);
+   }});
+     ISOLATE(
+       router.listenOne();
+     )
+
+     const string multipart_body =
+         "------vibeTestBoundary\r\n"
+         "Content-Disposition: form-data; name=\"title\"\r\n"
+         "\r\n"
+         "hello vibe\r\n"
+         "------vibeTestBoundary\r\n"
+         "Content-Disposition: form-data; name=\"doc\"; filename=\"note.txt\"\r\n"
+         "Content-Type: text/plain\r\n"
+         "\r\n"
+         "FILE-CONTENT-123\r\n"
+         "------vibeTestBoundary--\r\n";
+
+     POST fields = { multipart_body };
+     VHeaders hdrs = { "Content-Type: multipart/form-data; boundary=----vibeTestBoundary" };
+
+     const string res = http->post(fields, hdrs, "/");
+     isolate_method.get();
+
+     EXPECT_EQ(res, "hello vibe|note.txt|FILE-CONTENT-123");
+ }
+
+
+TEST_F(TestSuite, TestMimeTypes) {
+     EXPECT_EQ(vibe::mime::of("index.html"), "text/html");
+     EXPECT_EQ(vibe::mime::of("photo.JPG"), "image/jpeg");
+     EXPECT_EQ(vibe::mime::of("script.js"), "application/javascript");
+     EXPECT_EQ(vibe::mime::of("data.bin"), "application/octet-stream");
+     EXPECT_EQ(vibe::mime::of("no_extension"), "application/octet-stream");
+ }
+
+
+TEST_F(TestSuite, TestResponseBuilder) {
+     const string wire = vibe::http::Response{}
+                             .status(404)
+                             .type("text/plain")
+                             .set("X-App", "vibe")
+                             .body("oops")
+                             .str();
+
+     EXPECT_NE(wire.find("HTTP/1.1 404 Not Found\r\n"), string::npos);
+     EXPECT_NE(wire.find("Content-Type: text/plain\r\n"), string::npos);
+     EXPECT_NE(wire.find("X-App: vibe\r\n"), string::npos);
+     EXPECT_NE(wire.find("Content-Length: 4\r\n"), string::npos);
+     EXPECT_TRUE(wire.ends_with("\r\n\r\noops"));
+ }
+
+
+TEST_F(TestSuite, TestConfigPayloadTooLarge) {
+
+     Router router;
+     router.setPort(8080);
+
+     // Any complete request is bigger than this: must be rejected with 413.
+     router.configure({
+         .read_timeout     = std::chrono::seconds{2},
+         .max_request_size = 64,
+     });
+
+     router.get("/", {[&](Query &http) {
+                http.send(expected_default);
+       }});
+
+     ISOLATE(
+          router.listenOne();
+     )
+
+     const string res = http->get();
+     isolate_method.get();
+
+     EXPECT_EQ(res, R"lit({"error":"payload too large"})lit");
+ }
+
+
+TEST_F(TestSuite, TestConfigureKeepsFlow) {
+
+     Router router;
+     router.setPort(8080);
+
+     router.configure({
+         .read_timeout     = std::chrono::seconds{10},
+         .write_timeout    = std::chrono::seconds{10},
+         .max_request_size = 8UL * 1024UL * 1024UL,
+         .read_chunk       = 32UL * 1024UL,
+         .threads          = 2,
+         .max_events       = 256,
+     });
+
+     router.get("/", {[&](Query &http) {
+                http.send(expected_default);
+       }});
+
+     ISOLATE(
+          router.listenOne();
+     )
+
+     const string res = http->get();
+     isolate_method.get();
+
+     EXPECT_EQ(expected_default, res);
+     EXPECT_EQ(router.config().threads, 2UL);
+     EXPECT_EQ(router.config().max_request_size, 8UL * 1024UL * 1024UL);
+ }
+

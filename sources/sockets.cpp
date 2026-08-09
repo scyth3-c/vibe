@@ -1,4 +1,6 @@
 #include <memory>
+#include <poll.h>
+#include <cerrno>
 
 #include "../include/vibe/sockets.h"
 
@@ -93,20 +95,25 @@ int Server::setNonblocking(const int& socket_id) {
 int Server::on() {
      try {
 
-
-         if ((socket_id = make_shared<int>(
-                 socket(DOMAIN, TYPE, PROTOCOL))) == nullptr) {
+         socket_id = make_shared<int>(socket(DOMAIN, TYPE, PROTOCOL));
+         if (*socket_id == MG_ERROR) {
              throw std::range_error("Failed to create domain socket");
          }
 
          if (setsockopt(*socket_id,
                         SOL_SOCKET,
-                        SO_REUSEADDR |
-                        SO_REUSEPORT,
+                        SO_REUSEADDR,
                         &*option_mame,
                         sizeof(*option_mame)) != 0x0) {
              throw std::range_error("Failed to set socket options");
          }
+
+         // Best effort: allows several sockets on the same port when available.
+         setsockopt(*socket_id,
+                    SOL_SOCKET,
+                    SO_REUSEPORT,
+                    &*option_mame,
+                    sizeof(*option_mame));
 
          if(setNonblocking(*socket_id) == MG_ERROR)
              throw std::runtime_error("Failed to set nonblocking");
@@ -115,19 +122,20 @@ int Server::on() {
          address.sin_addr.s_addr = INADDR_ANY;
          address.sin_port = htons(PORT);
 
-         unlink("127.0.0.1");
          if (bind(*socket_id, reinterpret_cast<struct sockaddr *>(&address), sizeof(address)) < 0) {
                throw std::range_error("Failed to bind socket");
           }
-         if (listen(*socket_id, 3) < 0x0) {
-              throw std::range_error("Failed to listen on socket");
-          }
+          const int backlog = (static_sessions != nullptr && *static_sessions > 0)
+                                  ? *static_sessions
+                                  : SOMAXCONN;
+          if (listen(*socket_id, backlog) < 0x0) {
+               throw std::range_error("Failed to listen on socket");
+           }
 
          return MG_OK;
      }
      catch (const std::exception &e) {
           std::cerr << e.what() << '\n';
-          lock_guard.unlock();
           return MG_ERROR;
      }
 }
@@ -161,45 +169,44 @@ void Server::setResponse(const std::array<char,DEF_BUFFER_SIZE> &buffer) {
      }
 }
 
+void Server::setResponse(const string &data) {
+     if (!data.empty()) {
+          buffereOd_data = make_shared<string>(data);
+     }
+}
+
 void Server::sendResponse(const string& _msg) const {
-     SendData data;
-     data.socket = *socket_id;
-     data.data = _msg;
-
-     epoll_event event{};
-     event.events = EPOLLOUT | EPOLLET;
-     event.data.ptr = &data;
-
-     if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, *socket_id, &event) == -1) {
-          std::cerr << "epoll_ctl " << strerror(errno) << std::endl;
-     }
-
-     std::array<epoll_event, 1> events{};
-
-     if(const int n = epoll_wait(epoll_fd, events.data(), 1, -1) ; n == -1) {
-          std::cerr << "epoll_wait " << strerror(errno) << std::endl;
+     if (socket_id == nullptr || _msg.empty())
           return;
-     }
-     
-     bool hasEPOLLOUT = (events[0].events & EPOLLOUT) != 0;
 
-     if(hasEPOLLOUT) {
+     const int fd = *socket_id;
+     size_t sent_total = 0;
 
-          if ( const ssize_t bytes_send =  send(data.socket, data.data.c_str(), data.data.size(), 0) ; bytes_send == -1) {
+     // The fd is owned exclusively by the calling worker (it was removed from
+     // epoll before dispatch), so we write directly: no shared epoll_wait and
+     // MSG_NOSIGNAL to avoid SIGPIPE killing the process when the peer is gone.
+     while (sent_total < _msg.size()) {
 
-               std::cerr << "Error: Sending data" << std::endl;
-               epoll_ctl(epoll_fd, EPOLL_CTL_DEL, data.socket, nullptr);
-               close(data.socket);
+          const ssize_t bytes_send = send(fd, _msg.data() + sent_total, _msg.size() - sent_total, MSG_NOSIGNAL);
 
-          } else if(bytes_send == 0) {
-               epoll_ctl(epoll_fd, EPOLL_CTL_DEL, data.socket, nullptr);
-               close(data.socket);
-          } else {
-               epoll_ctl(epoll_fd, EPOLL_CTL_MOD, data.socket, &events[0]);
+          if (bytes_send > 0) {
+               sent_total += static_cast<size_t>(bytes_send);
+               continue;
           }
+
+          if (bytes_send == -1 && errno == EINTR)
+               continue;
+
+           if (bytes_send == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                pollfd pfd{};
+                pfd.fd = fd;
+                pfd.events = POLLOUT;
+
+                if (poll(&pfd, 1, write_timeout_ms) > 0 && (pfd.revents & POLLOUT))
+                     continue;
+           }
+
+          break; // real error or timeout: give up, the caller closes the fd
      }
-
-
-
 }
 

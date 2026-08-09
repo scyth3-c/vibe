@@ -7,6 +7,9 @@
 
 #include <stdexcept>
 #include <memory>
+#include <atomic>
+#include <cerrno>
+#include <cstring>
 #include <sys/epoll.h>
 #include <unistd.h>
 #include <unordered_map>
@@ -14,6 +17,7 @@
 #include "../util/enums.h"
 #include "../util/parameter_proccess.h"
 
+#include "../config.hpp"
 #include "../routes.hpp"
 #include "../util/nterminal.h"
 #include "io.h"
@@ -24,7 +28,9 @@ using enums::neo;
 
     constexpr int BUFFER = neo::eSize::BUFFER;
     constexpr int SESSION = neo::eSize::SESSION;
-    constexpr int INIT_MAX_EVENTS = 10;
+    constexpr int INIT_MAX_EVENTS = 1024;
+    // Wake up periodically so setListenStatus(STOP) is actually honored.
+    constexpr int EPOLL_TIMEOUT_MS = 1000;
 
     template<class T>
     class RouterEpoll {
@@ -33,7 +39,7 @@ using enums::neo;
         shared_ptr<std::vector<epoll_event>> events;
         shared_ptr<T> connection;
         shared_ptr<RequestIO> request_t;
-        neo::eStatus listen_status_;
+        std::atomic<neo::eStatus> listen_status_;
 
     public:
 
@@ -46,32 +52,45 @@ using enums::neo;
 
 
         auto InitListenProcess() {
-            connection->on();
+            if (connection->on() != MG_OK)
+                throw std::runtime_error("AN ERROR OCCURRED WHEN INITIALIZING THE SERVER SOCKET");
+
             file_descriptor = connection->getDescription();
 
-            if(Server::setNonblocking(file_descriptor) == MG_ERROR)
+            if(file_descriptor < 0)
+                throw std::runtime_error(VB_MAIN_THREAD);
+
+            if(Server::setNonblocking(file_descriptor) == MG_ERROR) {
                 close(file_descriptor);
+                throw std::runtime_error(VB_MAIN_THREAD);
+            }
 
             if (epoll_fd == -1)
                 throw std::range_error(VB_EPOLL_RANGE);
         }
 
 
-        auto ListenProcess(epoll_event &event) const {
-            try {
-                const int notice = epoll_wait(epoll_fd, events->data(), INIT_MAX_EVENTS, VB_NVALUE);
-                request_t->Dispatch(notice, event);
+        auto ListenProcess(const int timeout) const {
+            const int notice = epoll_wait(epoll_fd, events->data(), static_cast<int>(events->size()), timeout);
+
+            if (notice == VB_NVALUE) {
+                if (errno == EINTR)
+                    return;
+                throw std::runtime_error(std::string(VB_EPOLL_CERR) + strerror(errno));
             }
-            catch(const std::exception& e) {
-                terminal(e.what());
-                close(epoll_fd);
-                if(close(file_descriptor) < VB_OK)
-                    throw std::range_error(VB_MAIN_THREAD);
-            }
+
+            request_t->Dispatch(notice);
         }
 
-        auto getMainProcess(const shared_ptr<RoutesMap> &_routes, const neo::LISTEN_TYPE _listen_type = neo::WHILE) {
+        auto getMainProcess(const shared_ptr<RoutesMap> &_routes,
+                            const neo::LISTEN_TYPE _listen_type = neo::WHILE,
+                            const vibe::Config &config = {}) {
                 InitListenProcess();
+
+                // Apply the configured epoll batch size before waiting.
+                if (config.max_events > 0
+                    && static_cast<size_t>(config.max_events) != events->size())
+                    events = make_shared<vector<epoll_event>>(static_cast<size_t>(config.max_events));
 
                 epoll_event event{};
                 event.events = EPOLLIN;
@@ -81,28 +100,34 @@ using enums::neo;
                     close(epoll_fd);
                     throw std::range_error(VB_EPOLL_CTL);
                 }
-                request_t = make_shared<RequestIO>(events, _routes, file_descriptor, epoll_fd, connection);
+                request_t = make_shared<RequestIO>(events, _routes, file_descriptor, epoll_fd, connection, config);
 
-                if (_listen_type == neo::WHILE) {
-                    while (static_cast<bool>(listen_status_)) {
-                        ListenProcess(event);
+                const auto wait_timeout = static_cast<int>(config.epoll_timeout.count());
+
+                try {
+                    if (_listen_type == neo::WHILE) {
+                        while (listen_status_.load() == neo::eStatus::START) {
+                            ListenProcess(wait_timeout);
+                        }
                     }
-                    close(epoll_fd);
-                    close(file_descriptor);
-                    request_t.reset();
+                    else {
+                        // UNIQUE: block until the connection and its request arrive
+                        ListenProcess(VB_NVALUE);
+                        ListenProcess(VB_NVALUE);
+                    }
                 }
-                else {
-                        // UNIQUE
-                        ListenProcess(event);
-                        ListenProcess(event);
-                        close(epoll_fd);
-                        close(file_descriptor);
-                        request_t.reset();
+                catch(const std::exception& e) {
+                    terminal(e.what());
                 }
+
+                // request_t joins the pool, so in-flight responses finish first.
+                request_t.reset();
+                close(epoll_fd);
+                close(file_descriptor);
         }
 
         void setListenStatus(const neo::eStatus _status) {
-            this->listen_status_ = _status;
+            this->listen_status_.store(_status);
         }
     };
 }

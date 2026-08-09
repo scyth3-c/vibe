@@ -1,41 +1,45 @@
 #include "../../include/vibe/request/parameters.hpp"
 
 #include <algorithm>
-#include <utility>
 
 param_box::param_box(string _name, string _value){
       name = std::move(_name);
       value = std::move(_value);
 }
 
-Param_t::Param_t(){
-    _list.emplace_back("NULL","NULL");
-}
-param_box Param_t:: operator[](int index) {
-       param_box nuevo(_list[index]);
-       return nuevo;
+param_box Param_t::operator[](const int index) {
+    if (index < 0 || static_cast<size_t>(index) >= _list.size())
+        return param_box{"null", "null"};
+    return param_box(_list[static_cast<size_t>(index)]);
 }
 
-void Param_t::setContent(vector<std::pair<string,string>> &list) {
-    _list.clear();
+void Param_t::setContent(const vector<std::pair<string, string>> &list) {
     _list = list;
 }
 
 
 [[maybe_unused]] bool Param_t::exist(const string& param){
-    return std::any_of(_list.begin(), _list.end(), [&](std::pair<string,string> &list) -> bool {
-        return list.first == param;
-    });
+    return exist(std::string_view(param));
+}
+
+bool Param_t::exist(const std::string_view name) const {
+    return std::any_of(_list.begin(), _list.end(),
+                       [&](const auto& item) { return item.first == name; });
 }
 
 
 param_box Param_t::get(const string& param){
-    std::vector<std::pair<string,string>>::iterator item = std::find_if(_list.begin(), _list.end(), [&](std::pair<string,string> &iter) {
-           return (iter.first == param);
-       });
+    const auto item = std::find_if(_list.begin(), _list.end(),
+                                   [&](const auto& iter) { return iter.first == param; });
 
-    if(item != _list.end()) {
-        return {item->first, item->second};
-    }
-    return {"null", "null"};
+    if (item != _list.end())
+        return param_box{item->first, item->second};
+
+    return param_box{"null", "null"};
+}
+
+string Param_t::value_or(const std::string_view name, string fallback) const {
+    const auto item = std::find_if(_list.begin(), _list.end(),
+                                   [&](const auto& iter) { return iter.first == name; });
+    return item != _list.end() ? item->second : std::move(fallback);
 }

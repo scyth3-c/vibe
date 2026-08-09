@@ -37,6 +37,16 @@ void  Query::readFile(const string& path,const string& type, const std::function
     last = utility_t::prepare_basic(data, type, headers, status);
     callback();
 }
+void  Query::readFile(const string& path, const std::function<void()>& callback) noexcept {
+    auto [data, status] = BasicRead::processing(path);
+    last = utility_t::prepare_basic(data, string(vibe::mime::of(path)), headers, status);
+    callback();
+}
+void  Query::file(const string& path, const std::function<void()>& callback) noexcept {
+    auto [data, status] = BasicRead::processing(path);
+    last = utility_t::prepare_basic(data, string(vibe::mime::of(path)), headers, status);
+    callback();
+}
 void  Query::readFileX(const string& path,const string& type, const std::function<void()>& callback) noexcept {
     auto [data, status] = CppReader::processing(path);
     last = utility_t::prepare_basic(data, type, headers, status);

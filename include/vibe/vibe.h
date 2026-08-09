@@ -3,15 +3,17 @@
 
 #include "sockets.h"
 #include "routes.hpp"
+#include "config.hpp"
 #include "request/router_epoll.h"
 #include "util/enums.h"
+#include <chrono>
 #include <memory>
 #include <string>
 
 using std::make_shared, std::make_unique;
 using std::string;
 
-using workers::RoutesMap, workers::BUFFER, workers::SESSION;
+using workers::RoutesMap;
 using enums::neo;
 
 template <class T>
@@ -21,9 +23,11 @@ class Vibe {
     shared_ptr<RoutesMap> routes;
     std::shared_ptr<T> tcpControl;
 
-    uint16_t PORT{neo::DEF_PORT};
+    vibe::Config config_{};
 
     void tcpInt();
+    // Re-applies the network-related fields of config_ to a live tcpControl.
+    void applyNetworkConfig() noexcept;
 
 public:
     [[maybe_unused]] explicit Vibe(uint16_t port);
@@ -44,8 +48,24 @@ public:
 
     int use(const Route_t&);
 
+    // ---- server configuration ----
+
+    // Replaces the whole configuration (designated initializers recommended):
+    //   router.configure({ .max_request_size = 64UL*1024*1024, .threads = 8 });
+    Vibe& configure(const vibe::Config& config) noexcept;
+    [[nodiscard]] const vibe::Config& config() const noexcept { return config_; }
+
+    Vibe& setReadTimeout(std::chrono::milliseconds timeout) noexcept;
+    Vibe& setWriteTimeout(std::chrono::milliseconds timeout) noexcept;
+    Vibe& setMaxRequestSize(size_t bytes) noexcept;
+    Vibe& setReadChunkSize(size_t bytes) noexcept;
+    Vibe& setThreads(size_t threads) noexcept;
+    Vibe& setMaxEvents(int max_events) noexcept;
+    Vibe& setBacklog(int backlog) noexcept;
+    Vibe& setBufferSize(int size) noexcept;
+
     int setPort(uint16_t) noexcept;
-    [[nodiscard]] [[maybe_unused]] inline uint16_t getPort() const noexcept{return PORT;};
+    [[nodiscard]] [[maybe_unused]] inline uint16_t getPort() const noexcept{return config_.port;};
     void listen();
     void listenOne();
     void setListenStatus(neo::eStatus);
@@ -54,7 +74,7 @@ public:
 
 template <class T>
 [[maybe_unused]] Vibe<T>::Vibe(const uint16_t port) {
-    if (port >= neo::MIN_PORT) { PORT = port; }
+    if (port >= neo::MIN_PORT) { config_.port = port; }
     tcpInt();
 }
 
@@ -128,11 +148,11 @@ template <class T>
 
 template <class T>
 void Vibe<T>::listen() {
-   router_epoll->getMainProcess(routes);
+   router_epoll->getMainProcess(routes, neo::WHILE, config_);
 }
 template <class T>
 void Vibe<T>::listenOne() {
-    router_epoll->getMainProcess(routes, neo::UNIQUE);
+    router_epoll->getMainProcess(routes, neo::UNIQUE, config_);
 }
 
 template <class T>
@@ -144,9 +164,9 @@ void Vibe<T>::setListenStatus(neo::eStatus _status) {
 template <class T>
 int Vibe<T>::setPort(const uint16_t _port) noexcept {
     if (_port >= neo::MIN_PORT) {
-        PORT = _port;
+        config_.port = _port;
         if(tcpControl != nullptr) {
-            tcpControl->setPort(PORT);
+            tcpControl->setPort(config_.port);
             return neo::OK;
         }
     }
@@ -154,13 +174,80 @@ int Vibe<T>::setPort(const uint16_t _port) noexcept {
 }
 
 
+template <class T>
+Vibe<T>& Vibe<T>::configure(const vibe::Config& config) noexcept {
+    config_ = config;
+    applyNetworkConfig();
+    return *this;
+}
+
+template <class T>
+Vibe<T>& Vibe<T>::setReadTimeout(const std::chrono::milliseconds timeout) noexcept {
+    config_.read_timeout = timeout;
+    return *this;
+}
+
+template <class T>
+Vibe<T>& Vibe<T>::setWriteTimeout(const std::chrono::milliseconds timeout) noexcept {
+    config_.write_timeout = timeout;
+    return *this;
+}
+
+template <class T>
+Vibe<T>& Vibe<T>::setMaxRequestSize(const size_t bytes) noexcept {
+    config_.max_request_size = bytes;
+    return *this;
+}
+
+template <class T>
+Vibe<T>& Vibe<T>::setReadChunkSize(const size_t bytes) noexcept {
+    config_.read_chunk = bytes == 0 ? 1 : bytes;
+    return *this;
+}
+
+template <class T>
+Vibe<T>& Vibe<T>::setThreads(const size_t threads) noexcept {
+    config_.threads = threads;
+    return *this;
+}
+
+template <class T>
+Vibe<T>& Vibe<T>::setMaxEvents(const int max_events) noexcept {
+    config_.max_events = max_events;
+    return *this;
+}
+
+template <class T>
+Vibe<T>& Vibe<T>::setBacklog(const int backlog) noexcept {
+    config_.backlog = backlog;
+    if (tcpControl != nullptr)
+        tcpControl->setSessions(backlog);
+    return *this;
+}
+
+template <class T>
+Vibe<T>& Vibe<T>::setBufferSize(const int size) noexcept {
+    config_.buffer_size = size;
+    if (tcpControl != nullptr)
+        tcpControl->setBuffer(size);
+    return *this;
+}
+
+template <class T>
+void Vibe<T>::applyNetworkConfig() noexcept {
+    if (tcpControl == nullptr)
+        return;
+    tcpControl->setBuffer(config_.buffer_size);
+    tcpControl->setPort(config_.port);
+    tcpControl->setSessions(config_.backlog);
+}
+
+
 template<class T>
 void Vibe<T>::tcpInt() {
 
     tcpControl = make_shared<T>();
-    tcpControl->setBuffer(BUFFER);
-    tcpControl->setPort(PORT);
-    tcpControl->setSessions(SESSION);
+    applyNetworkConfig();
 
     routes = make_shared<RoutesMap>();
     router_epoll = make_shared<workers::RouterEpoll<T>>(tcpControl);

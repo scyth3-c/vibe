@@ -81,7 +81,7 @@ int main() {
 ## Compile
 #### compile your project
 ```bash
-$ g++ -std=c++17  main.cpp -o server -L. -lvibe
+$ g++ -std=c++20  main.cpp -o server -L. -lvibe
 ```
 
 
