@@ -1,5 +1,9 @@
 #include "suite.h"
 
+#include <atomic>
+#include <chrono>
+#include <thread>
+
 
  TEST_F(TestSuite, TestBaseOne) {
 
@@ -364,15 +368,47 @@ TEST_F(TestSuite, TestResponseBuilder) {
  }
 
 
+TEST(ThreadPoolBackpressureTest, BlocksWhenQueueIsFullWithoutDroppingWork) {
+     threading::ThreadPool pool(1, 1);
+
+     std::atomic<int> completed{0};
+     std::atomic<bool> second_started{false};
+     std::atomic<bool> producer_finished{false};
+
+     auto first = pool.addTask([&] {
+         std::this_thread::sleep_for(std::chrono::milliseconds{60});
+         completed.fetch_add(1);
+     });
+
+     auto producer = std::async(std::launch::async, [&] {
+         auto second = pool.addTask([&] {
+             second_started.store(true);
+             completed.fetch_add(1);
+         });
+         second.get();
+         producer_finished.store(true);
+     });
+
+     std::this_thread::sleep_for(std::chrono::milliseconds{20});
+     EXPECT_FALSE(producer_finished.load());
+
+     first.get();
+     producer.get();
+
+     EXPECT_TRUE(second_started.load());
+     EXPECT_EQ(completed.load(), 2);
+ }
+
+
 TEST_F(TestSuite, TestConfigPayloadTooLarge) {
 
      Router router;
      router.setPort(8080);
 
-     // Any complete request is bigger than this: must be rejected with 413.
+     // Any complete HTTP request is bigger than this: reject with 413.
      router.configure({
          .read_timeout     = std::chrono::seconds{2},
-         .max_request_size = 64,
+         .max_request_size = 16,
      });
 
      router.get("/", {[&](Query &http) {
@@ -402,6 +438,7 @@ TEST_F(TestSuite, TestConfigureKeepsFlow) {
          .read_chunk       = 32UL * 1024UL,
          .threads          = 2,
          .max_events       = 256,
+         .max_queue_size   = 64,
      });
 
      router.get("/", {[&](Query &http) {
@@ -416,7 +453,9 @@ TEST_F(TestSuite, TestConfigureKeepsFlow) {
      isolate_method.get();
 
      EXPECT_EQ(expected_default, res);
+     EXPECT_EQ(router.config().port, 8080);
      EXPECT_EQ(router.config().threads, 2UL);
+     EXPECT_EQ(router.config().max_queue_size, 64UL);
      EXPECT_EQ(router.config().max_request_size, 8UL * 1024UL * 1024UL);
  }
 

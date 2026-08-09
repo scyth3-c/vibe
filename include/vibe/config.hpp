@@ -23,7 +23,7 @@ namespace vibe {
 
     struct Config {
         // ---- network ----
-        uint16_t port = enums::neo::eSize::DEF_PORT; // listening port
+        uint16_t port = 0; // listening port; 0 = default/keep current (DEF_PORT)
         int backlog = SOMAXCONN;                     // pending connections queue of listen()
         int buffer_size = enums::neo::eSize::BUFFER; // legacy socket buffer size
 
@@ -42,6 +42,9 @@ namespace vibe {
         // ---- concurrency / epoll ----
         size_t threads = 0; // worker threads; 0 = auto (hardware_concurrency)
         int max_events = 1024;                       // epoll event batch size
+        // Queued tasks before the dispatcher blocks (backpressure). 0 = auto:
+        // max(1024, threads * 256), enough to absorb an epoll batch burst.
+        size_t max_queue_size = 0;
         std::chrono::milliseconds epoll_timeout{1000}; // listen loop wake-up period
     };
 

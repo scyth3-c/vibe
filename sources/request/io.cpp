@@ -61,7 +61,7 @@ RequestIO::RequestIO(const shared_ptr<vector<epoll_event> > &events,
                                                    connection(con),
                                                    config_(config) {
 
-    thread_pool_ = make_shared<threading::ThreadPool>(threads_);
+    thread_pool_ = make_shared<threading::ThreadPool>(threads_, config_.max_queue_size);
 }
 
 
@@ -282,5 +282,5 @@ bool RequestIO::TimeGuard(const RoutesMap::const_iterator &itr) {
 
 
 void RequestIO::SetThreads(size_t size) {
-    thread_pool_ = make_shared<threading::ThreadPool>(size);
+    thread_pool_ = make_shared<threading::ThreadPool>(size, config_.max_queue_size);
 }

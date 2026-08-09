@@ -21,22 +21,28 @@ namespace threading {
 
     class ThreadPool {
 
-        vector<thread> threads_;
+        void init();
+
         size_t size_;
+        size_t max_queue_size_;
 
         queue<std::function<void()>> queue_;
         atomic<bool> stop_;
 
         mutex mutex_;
-        condition_variable condition_;
+        condition_variable cond_not_empty_;
+        condition_variable cond_not_full_;
+        vector<thread> threads_;
 
 
     public:
 
-       explicit ThreadPool(size_t threads);
+       explicit ThreadPool(size_t threads, size_t max_queue_size = 0);
         ~ThreadPool();
 
+        // Blocks when the queue is full: that is the backpressure signal.
         future<void> addTask(std::function<void()> task);
+        void kill();
 
     };
 
