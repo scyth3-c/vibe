@@ -33,28 +33,28 @@ void  Query::send(const string& _txt,const int status,  const std::function<void
 }
 
 void  Query::readFile(const string& path,const string& type, const std::function<void()>& callback) noexcept {
-    auto [data, status] =BasicRead::processing(path);
+    auto [data, status] = BasicRead::processing(path, render_sec);
     last = utility_t::prepare_basic(data, type, headers, status);
     callback();
 }
 void  Query::readFile(const string& path, const std::function<void()>& callback) noexcept {
-    auto [data, status] = BasicRead::processing(path);
+    auto [data, status] = BasicRead::processing(path, render_sec);
     last = utility_t::prepare_basic(data, string(vibe::mime::of(path)), headers, status);
     callback();
 }
 void  Query::file(const string& path, const std::function<void()>& callback) noexcept {
-    auto [data, status] = BasicRead::processing(path);
+    auto [data, status] = BasicRead::processing(path, render_sec);
     last = utility_t::prepare_basic(data, string(vibe::mime::of(path)), headers, status);
     callback();
 }
 void  Query::readFileX(const string& path,const string& type, const std::function<void()>& callback) noexcept {
-    auto [data, status] = CppReader::processing(path);
+    auto [data, status] = CppReader::processing(path, render_sec);
     last = utility_t::prepare_basic(data, type, headers, status);
     callback();
 }
 
 void  Query::compose(const string& path, const int reserve, const std::function<void()>& callback) noexcept {
-    auto[data, status] = MgReader::processing(path, reserve);
+    auto[data, status] = MgReader::processing(path, reserve, render_sec);
     last = utility_t::prepare_basic(data, "text/html" , headers, status);
     callback();
 }
@@ -62,8 +62,8 @@ void  Query::compose(const string& path, const int reserve, const std::function<
 void  Query::render(const string& path, const std::function<dataRender(dataRender& data)>& callback) noexcept {
 
  auto tasty_temp = std::make_unique<dataRender>(callback);
-last = utility_t::prepare_basic(tasty_temp->render(path), "text/html", headers);
-tasty_temp.reset();
+ last = utility_t::prepare_basic(tasty_temp->render(path, render_sec), "text/html", headers);
+ tasty_temp.reset();
 }
 
 void Query::setHeaders(const string& _body) noexcept {

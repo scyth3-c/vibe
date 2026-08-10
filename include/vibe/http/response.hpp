@@ -29,15 +29,21 @@ namespace vibe::http {
             return set("Content-Type", mime);
         }
 
-        // Adds or replaces (case-insensitive) a header.
+        // Adds or replaces (case-insensitive) a header. CR/LF and other
+        // control characters are stripped from both name and value so a
+        // tainted string can never split the response into extra headers.
         Response& set(const std::string_view name, const std::string_view value) {
+            const std::string safe_name  = sanitize(name);
+            const std::string safe_value = sanitize(value);
+            if (safe_name.empty())
+                return *this;
             for (auto& [hname, hvalue] : headers_) {
-                if (iequals(hname, name)) {
-                    hvalue = std::string(value);
+                if (iequals(hname, safe_name)) {
+                    hvalue = safe_value;
                     return *this;
                 }
             }
-            headers_.emplace_back(name, value);
+            headers_.emplace_back(safe_name, safe_value);
             return *this;
         }
 
@@ -148,6 +154,19 @@ namespace vibe::http {
                        return std::tolower(static_cast<unsigned char>(x))
                            == std::tolower(static_cast<unsigned char>(y));
                    });
+        }
+
+        // Truncates at the first CR/LF or C0 control character (HTTP
+        // response splitting): everything from there on is discarded.
+        static std::string sanitize(const std::string_view in) {
+            std::string out;
+            out.reserve(in.size());
+            for (const char c : in) {
+                if (static_cast<unsigned char>(c) < 0x20 || c == 0x7f)
+                    break;
+                out.push_back(c);
+            }
+            return out;
         }
 
         int code_ = 200;

@@ -1,16 +1,23 @@
 #ifndef DATA_RENDER_HPP
 #define DATA_RENDER_HPP
 
-#include <fstream>
+#include <functional>
+#include <iostream>
 #include <string>
-#include <filesystem>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 #include "notify.h"
 #include "local_utility.h"
+#include "render_security.h"
+#include "secure_render.h"
+
+using std::string;
 
 class dataRender {
 
-        vector<std::tuple<std::string, std::string>> variables = {};
+        std::vector<std::tuple<std::string, std::string>> variables = {};
 
 public:
 
@@ -27,67 +34,57 @@ public:
         variables.emplace_back(nombre,valor);
     }
 
-     std::string render(const string& path)  {
+     std::string render(const string& path, const vibe::RenderSecurity& sec = {})  {
 
-        if(!std::filesystem::exists(path)) return notify_html::noFIle(path);        
+        if(!sec.root.empty() && !vibe::srender::is_within(sec.root, path))
+            return notify_html::noFIle(path);
 
-        string body = process::readFile(path);
-        string buffer{};
+        auto read = vibe::srender::read_bounded(path, sec.max_file_bytes);
+        if (read.err != vibe::srender::ReadErr::Ok)
+            return notify_html::noFIle(path);
 
-        for (size_t iterator = 0; iterator < variables.size(); iterator++) {
-            buffer = body_tratament(body);
-            body = buffer;
-        }
+        string body = std::move(read.data);
+
+        for (size_t iterator = 0; iterator < variables.size(); iterator++)
+            body = body_tratament(body);
         return body;
-}
+    }
 
+private:
+     // Replaces the first "[[name]]" marker with its variable. A body with
+     // no markers is returned unchanged (the legacy code read and wrote
+     // through uninitialized coordinates in that case).
+     string body_tratament(const string &body) {
 
-     string body_tratament(string &body) {
+         size_t open = string::npos;
+         size_t close = string::npos;
 
-         std::pair<int,int> coords;
-         int guard = 0;
-
-        for (size_t iter = 0; iter < body.length(); iter++) {
-            string eye{};
-            eye += body[iter];
-            eye += body[iter+0x1];
-
-            if(eye == OPEN_DATA) {
-                guard = 1;
-                body[iter] = char(0x20);
-                body[iter+1] = char(0x20);
-                coords.first = (int)iter+0x2;
-
-            }else if(eye == CLOSE_DATA){
-                guard = 0;
-                body[iter] = char(0x20);
-                body[iter+1] = char(0x20);
-                coords.second = (int)iter-0x1;
+        for (size_t iter = 0; iter + 1 < body.length(); iter++) {
+            if (body[iter] == OPEN_DATA[0] && body[iter + 1] == OPEN_DATA[1])
+                open = iter;
+            else if (body[iter] == CLOSE_DATA[0] && body[iter + 1] == CLOSE_DATA[1]) {
+                close = iter;
                 break;
             }
         }
-            if(guard==1) return notify_html::noSafeData();
-       
-         string name;
-         string data;
 
-            for(int i=coords.first; i<=coords.second; i++ ){
-                name += body[i];
-                body[i] = char(32);
-            }
-            for(auto & variable : variables){
-                if((std::get<0>(variable)) == name){
-                    data = std::get<1>(variable);
-                    break;
-                } else{
-                    data = "error";
-                }
-            }
-        string newest = body.insert(coords.first, data);
-        return newest;
-    } 
+        if (open == string::npos && close == string::npos)
+            return body;
+        if (open == string::npos || close == string::npos || close < open)
+            return notify_html::noSafeData();
 
+         const string name = body.substr(open + 2, close - open - 2);
 
+         string data = "error";
+         for (auto & variable : variables) {
+             if (std::get<0>(variable) == name) {
+                 data = std::get<1>(variable);
+                 break;
+             }
+         }
+
+        return body.substr(0, open) + data + body.substr(close + 2);
+    }
 };
 
 #endif // ! DATA_RENDER_HPP

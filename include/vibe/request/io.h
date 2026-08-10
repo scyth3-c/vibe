@@ -73,7 +73,7 @@ class RequestIO {
     void SetThreads(size_t size);
 
     static bool TimeGuard(const RoutesMap::const_iterator & itr);
-    static void ExecuteRoute(const shared_ptr<Server> &instance, const shared_ptr<RoutesMap> &routes);
+    void ExecuteRoute(const shared_ptr<Server> &instance, const shared_ptr<RoutesMap> &routes) const;
 };
 
 #endif //IO_H

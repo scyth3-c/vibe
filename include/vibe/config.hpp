@@ -18,6 +18,7 @@
 #include <sys/socket.h>
 
 #include "util/enums.h"
+#include "util/render_security.h"
 
 namespace vibe {
 
@@ -46,6 +47,9 @@ namespace vibe {
         // max(1024, threads * 256), enough to absorb an epoll batch burst.
         size_t max_queue_size = 0;
         std::chrono::milliseconds epoll_timeout{1000}; // listen loop wake-up period
+
+        // ---- file rendering hardening (readFile / readFileX / compose / render) ----
+        RenderSecurity render{};
     };
 
 } // namespace vibe

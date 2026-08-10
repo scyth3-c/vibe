@@ -218,7 +218,7 @@ RequestIO::ReadStatus RequestIO::ReadRequest(const int event_fd, string &out) co
 }
 
 
-void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_ptr<RoutesMap> &routes) {
+void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_ptr<RoutesMap> &routes) const {
     string send_target = vibe::http::Response{}
                              .status(404)
                              .type("application/json")
@@ -244,7 +244,7 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
 
                 if (!guarded) {
                     std::unique_ptr<string> guard_msg;
-                    auto [data, time_key] = itr->second->middlewares.execute(*message, guard_msg);
+                    auto [data, time_key] = itr->second->middlewares.execute(*message, guard_msg, config_.render);
 
                     if (time_key > VB_OK) {
                         std::lock_guard<std::mutex> lock(itr->second->route_mutex);

@@ -22,6 +22,7 @@
 #include "util/mg_reader.h"
 #include "util/data_render.h"
 #include "util/json.hpp"
+#include "util/render_security.h"
 
 using std::string;
 
@@ -76,6 +77,12 @@ class Query {
     Request body; // property access
     Request query;
 
+    // Security policy applied by the file-rendering methods below. The
+    // router injects the server-wide value before the middlewares run.
+    vibe::RenderSecurity render_sec{};
+
+    void setRenderSecurity(const vibe::RenderSecurity& sec) noexcept { render_sec = sec; }
+
     [[nodiscard]] string  getData()    const noexcept;
     [[nodiscard]] bool    getNext()    const noexcept;
 
@@ -122,10 +129,12 @@ struct Core_init_t  {
     [[nodiscard]] [[maybe_unused]] inline size_t size() const noexcept { return functions.size(); }
 
      std::pair<string, std::chrono::duration<double>::rep> execute(const vibe::http::Message &message,
-                                                                   std::unique_ptr<string> &guard_msg) {
+                                                                    std::unique_ptr<string> &guard_msg,
+                                                                    const vibe::RenderSecurity& render_sec = {}) {
         // A fresh Query per request: execute() can run concurrently on several
         // worker threads for the same route, so no state may live in members.
         auto remote_control = std::make_unique<Query>();
+        remote_control->setRenderSecurity(render_sec);
 
         string response{};
 

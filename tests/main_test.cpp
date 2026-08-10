@@ -1,7 +1,10 @@
 #include "suite.h"
 
+#include "../include/vibe/util/secure_render.h"
+
 #include <atomic>
 #include <chrono>
+#include <fstream>
 #include <thread>
 
 
@@ -457,5 +460,310 @@ TEST_F(TestSuite, TestConfigureKeepsFlow) {
      EXPECT_EQ(router.config().threads, 2UL);
      EXPECT_EQ(router.config().max_queue_size, 64UL);
      EXPECT_EQ(router.config().max_request_size, 8UL * 1024UL * 1024UL);
+ }
+
+
+// ---------------------------------------------------------------------------
+// Render hardening
+// ---------------------------------------------------------------------------
+
+TEST(SecureRenderUnit, Sha256KnownVector) {
+     EXPECT_EQ(vibe::srender::sha256_hex("abc"),
+               "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+     EXPECT_EQ(vibe::srender::sha256_hex(""),
+               "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+}
+
+TEST(SecureRenderUnit, IncludeNameWhitelist) {
+     EXPECT_TRUE(vibe::srender::valid_include_name("one.html"));
+     EXPECT_TRUE(vibe::srender::valid_include_name("a-b_c.d"));
+     EXPECT_FALSE(vibe::srender::valid_include_name("../../etc/passwd"));
+     EXPECT_FALSE(vibe::srender::valid_include_name(".."));
+     EXPECT_FALSE(vibe::srender::valid_include_name("/etc/passwd"));
+     EXPECT_FALSE(vibe::srender::valid_include_name("a/b"));
+     EXPECT_FALSE(vibe::srender::valid_include_name(""));
+     EXPECT_FALSE(vibe::srender::valid_include_name(string("a\0b", 3)));
+}
+
+TEST(SecureRenderUnit, IsWithinJail) {
+     EXPECT_TRUE(vibe::srender::is_within(".", "./main_test.cpp"));
+     EXPECT_TRUE(vibe::srender::is_within(".", "main_test.cpp"));
+     EXPECT_FALSE(vibe::srender::is_within(".", "/etc/passwd"));
+     EXPECT_FALSE(vibe::srender::is_within(".", "../../../../etc/passwd"));
+     EXPECT_FALSE(vibe::srender::is_within(".", "../vibe/README.md"));
+}
+
+TEST(SecureRenderUnit, ResponseHeaderInjectionStripped) {
+     const string wire = vibe::http::Response{}
+                             .set("X-Safe", "ok\r\nX-Injected: evil")
+                             .set("X-Weird\r\nName", "v")
+                             .str();
+     // The value is truncated at the first CR/LF: no extra header is born.
+     EXPECT_EQ(wire.find("X-Injected"), string::npos);
+     EXPECT_EQ(wire.find("Name: v"), string::npos);
+     EXPECT_NE(wire.find("X-Safe: ok\r\n"), string::npos);
+     EXPECT_NE(wire.find("X-Weird: v\r\n"), string::npos);
+}
+
+TEST(SecureRenderUnit, BasicReadRejectsNonRegularFiles) {
+     // A directory is not a file: the legacy reader served an empty 200.
+     auto [data, status] = BasicRead::processing("/tmp");
+     EXPECT_EQ(status, "403");
+     EXPECT_TRUE(data.empty() || data.find("<") == string::npos || data.find("&lt;") != string::npos);
+}
+
+TEST(SecureRenderUnit, BasicReadJailBlocksEscape) {
+     vibe::RenderSecurity sec;
+     sec.root = "."; // jail to the CWD
+     auto [data, status] = BasicRead::processing("/etc/passwd", sec);
+     EXPECT_EQ(status, "403");
+     EXPECT_EQ(data.find("root:"), string::npos);
+}
+
+TEST(SecureRenderUnit, CppReaderWithoutCodeBlockIsVerbatim) {
+     // Legacy behavior was undefined (uninitialized coordinates): a template
+     // without '$' must now be served untouched.
+     const string file = "./sec_notags.html";
+     { std::ofstream out(file); out << "<p>plain</p>"; }
+
+     auto [data, status] = CppReader::processing(file);
+     EXPECT_EQ(status, "200");
+     EXPECT_EQ(data, "<p>plain</p>");
+     std::filesystem::remove(file);
+}
+
+TEST(SecureRenderUnit, CppReaderEmptyFileDoesNotCrash) {
+     // Legacy scanned raw_html.length() - 1 == SIZE_MAX positions.
+     const string file = "./sec_empty.html";
+     { std::ofstream out(file); }
+
+     auto [data, status] = CppReader::processing(file);
+     EXPECT_EQ(status, "200");
+     EXPECT_TRUE(data.empty());
+     std::filesystem::remove(file);
+}
+
+TEST(SecureRenderUnit, ComposeRejectsTraversalModule) {
+     const string file = "./sec_trav.html";
+     { std::ofstream out(file); out << "A#[../../../etc/passwd];B"; }
+
+     auto [data, status] = MgReader::processing(file, 1);
+     EXPECT_EQ(status, "403");
+     EXPECT_EQ(data.find("root:"), string::npos);
+     std::filesystem::remove(file);
+}
+
+TEST(SecureRenderUnit, ComposeWithoutTagsIsUnchanged) {
+     // Legacy returned 404 on success and ran with uninitialized coords when
+     // the template had no module tag at all.
+     const string file = "./sec_plain.html";
+     { std::ofstream out(file); out << "<h1>no modules</h1>"; }
+
+     auto [data, status] = MgReader::processing(file, 2);
+     EXPECT_EQ(status, "200");
+     EXPECT_EQ(data, "<h1>no modules</h1>");
+     std::filesystem::remove(file);
+}
+
+TEST(SecureRenderUnit, DataRenderWithoutMarkersIsUnchanged) {
+     // Legacy body_tratament() read/wrote through uninitialized coordinates.
+     const string file = "./sec_data_plain.html";
+     { std::ofstream out(file); out << "<b>static</b>"; }
+
+     dataRender renderer([](dataRender& d) -> dataRender {
+         d("unused", "x");
+         return d;
+     });
+     EXPECT_EQ(renderer.render(file), "<b>static</b>");
+     std::filesystem::remove(file);
+}
+
+// The new integration tests below use their own port (and their own
+// client) so they never share a listening socket with the legacy tests:
+// the suite runs every test as a short-lived process on the same port and
+// SO_REUSEPORT can hand a fresh connection to a dying neighbor.
+
+TEST_F(TestSuite, TestReadFileXDisabledByConfig) {
+
+     Router router;
+     router.setPort(8091);
+     router.configure({
+         .render = { .allow_readfilex = false },
+     });
+
+     router.get("/", {[&](Query &http) {
+                http.readFileX("../examples/files/cpp.html", "text/html");
+       }});
+
+     ISOLATE(
+          router.listenOne();
+     )
+
+     Veridic client("http://localhost:8091");
+     const string res = client.get();
+     isolate_method.get();
+
+     EXPECT_NE(res.find("disabled"), string::npos);
+ }
+
+TEST_F(TestSuite, TestReadFileXKillsInfiniteLoop) {
+
+     const string file = "./sec_loop.html";
+     { std::ofstream out(file); out << "X$ while(true){} $Y"; }
+
+     Router router;
+     router.setPort(8092);
+     router.configure({
+         .render = {
+             .run_timeout = std::chrono::milliseconds{500},
+         },
+     });
+
+     router.get("/", {[&](Query &http) {
+                http.readFileX(file, "text/html");
+       }});
+
+     ISOLATE(
+          router.listenOne();
+     )
+
+     Veridic client("http://localhost:8092");
+     const auto start = std::chrono::steady_clock::now();
+     const string res = client.get();
+     isolate_method.get();
+     const auto elapsed = std::chrono::steady_clock::now() - start;
+
+     // The runaway program is SIGKILLed after run_timeout instead of
+     // pinning a worker thread forever.
+     EXPECT_NE(res.find("failed or timed out"), string::npos);
+     EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 30);
+
+     // Second request on a fresh router: the cached binary is reused (no
+     // recompilation) and the worker pool survived the kill.
+     Router router2;
+     router2.setPort(8093);
+     router2.configure({
+         .render = {
+             .run_timeout = std::chrono::milliseconds{500},
+         },
+     });
+     router2.get("/", {[&](Query &http) {
+                http.readFileX(file, "text/html");
+       }});
+
+     Veridic client2("http://localhost:8093");
+     const auto start2 = std::chrono::steady_clock::now();
+     std::future<void> second = std::async(std::launch::async, [&] { router2.listenOne(); });
+     const string res2 = client2.get();
+     second.get();
+     const auto elapsed2 = std::chrono::steady_clock::now() - start2;
+
+     EXPECT_NE(res2.find("failed or timed out"), string::npos);
+     EXPECT_LT(std::chrono::duration_cast<std::chrono::seconds>(elapsed2).count(), 10);
+
+     std::filesystem::remove(file);
+ }
+
+TEST_F(TestSuite, TestReadFileXCacheKeepsOutput) {
+
+     const string file = "./sec_cached.html";
+     { std::ofstream out(file); out << "A$ std::cout << \"[cached-ok]\"; $B"; }
+
+     Router router;
+     router.setPort(8094);
+     router.get("/", {[&](Query &http) {
+                http.readFileX(file, "text/html");
+       }});
+
+     ISOLATE(
+          router.listenOne();
+     )
+
+     Veridic client("http://localhost:8094");
+     const string res = client.get();
+     isolate_method.get();
+     EXPECT_NE(res.find("cached-ok"), string::npos);
+
+     // Second hit must produce the exact same output from the cached binary.
+     Router router2;
+     router2.setPort(8095);
+     router2.get("/", {[&](Query &http) {
+                http.readFileX(file, "text/html");
+       }});
+
+     Veridic client2("http://localhost:8095");
+     std::future<void> second = std::async(std::launch::async, [&] { router2.listenOne(); });
+     const string res2 = client2.get();
+     second.get();
+     EXPECT_EQ(res, res2);
+
+     std::filesystem::remove(file);
+ }
+
+TEST_F(TestSuite, TestReadFileJailOverHttp) {
+
+     const string file = "./sec_ok.json";
+     { std::ofstream out(file); out << "{\"ok\":true}"; }
+
+     Router router;
+     router.setPort(8096);
+     router.configure({
+         .render = { .root = "." }, // jail everything to the CWD
+     });
+     router.get("/", {[&](Query &http) {
+                http.readFile("/etc/passwd", "text/plain");
+       }});
+
+     ISOLATE(
+          router.listenOne();
+     )
+
+     Veridic client("http://localhost:8096");
+     const string blocked = client.get();
+     isolate_method.get();
+     EXPECT_EQ(blocked.find("root:"), string::npos);
+
+     // Same jail, a file inside it is still served.
+     Router router2;
+     router2.setPort(8097);
+     router2.configure({
+         .render = { .root = "." },
+     });
+     router2.get("/", {[&](Query &http) {
+                http.readFile(file, "application/json");
+       }});
+
+     Veridic client2("http://localhost:8097");
+     std::future<void> second = std::async(std::launch::async, [&] { router2.listenOne(); });
+     const string ok = client2.get();
+     second.get();
+     EXPECT_EQ(ok, "{\"ok\":true}");
+
+     std::filesystem::remove(file);
+ }
+
+TEST_F(TestSuite, TestComposeTraversalOverHttp) {
+
+     const string file = "./sec_http_trav.html";
+     { std::ofstream out(file); out << "<p>#[../../../etc/passwd];</p>"; }
+
+     Router router;
+     router.setPort(8098);
+     router.get("/", {[&](Query &http) {
+                http.compose(file, 1);
+       }});
+
+     ISOLATE(
+          router.listenOne();
+     )
+
+     Veridic client("http://localhost:8098");
+     const string res = client.get();
+     isolate_method.get();
+
+     EXPECT_EQ(res.find("root:"), string::npos);
+     EXPECT_NE(res.find("not allowed"), string::npos);
+
+     std::filesystem::remove(file);
  }
 
