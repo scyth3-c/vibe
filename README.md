@@ -17,11 +17,12 @@
 3. [Compile](#compile)
 4. [Server configuration](#server-configuration)
 5. [Render security](#render-security)
-6. [Examples](#examples)
-7. [Support](#support)
-8. [Testing](#testing)
-9. [Contribution](#contribution)
-10. [License](#license)
+6. [Process & environment](#process--environment)
+7. [Examples](#examples)
+8. [Support](#support)
+9. [Testing](#testing)
+10. [Contribution](#contribution)
+11. [License](#license)
 
 
 
@@ -183,6 +184,44 @@ router.setCppToolchain({ .standard = "c++20" });
 The toolchain is part of the binary cache key: rebuilding the same
 template with different flags never serves a stale binary.
 
+## Process & environment
+
+Node.js-style runtime information and configuration, available just by
+including `vibe/vibe.h`.
+
+`vibe::process` captures the process data once (first use):
+
+```cpp
+vibe::process.pwd        // directory containing the executable
+vibe::process.cwd        // working directory it was launched from
+vibe::process.exec_path  // absolute path of the executable
+vibe::process.pid        // process id (also ppid, argv, hostname,
+                         // username, platform, arch)
+vibe::process.uptime()        // seconds since the process started
+vibe::process.memory_usage()  // resident memory in bytes
+vibe::process.path(".env")    // path resolved against the executable directory
+```
+
+`vibe::environment` loads the `.env` file sitting **next to the
+executable** automatically, and also holds runtime "session" values.
+Values from the file and `set()` take precedence over the OS
+environment; every method is thread-safe.
+
+```cpp
+vibe::environment.get("TOKEN")              // .env / set(), else OS env, else ""
+vibe::environment.get("TOKEN", "fallback")
+vibe::environment.get_as<int>("PORT", 8080) // typed: arithmetic, bool, string
+vibe::environment["TOKEN"]
+
+vibe::environment.set("request_count", "1") // runtime session value
+vibe::environment.reload()                  // re-read the .env file
+vibe::environment.load("config/.env")       // or load another file
+```
+
+The `.env` syntax supports `#` comments, `export KEY=VALUE`, quoted
+values and trailing comments. See
+[`examples/process`](examples/process/main.cpp) and
+[`examples/environment`](examples/environment/main.cpp).
 
 ## Examples
 
@@ -205,7 +244,10 @@ servers for the different use cases:
   [route-cooling](examples/route-cooling/main.cpp) (`web.guard`),
   [graceful-shutdown](examples/graceful-shutdown/main.cpp),
   [middlewares](examples/middlewares/main.cpp),
-  [router](examples/router/) (route separation with `Route_t` + `use`)
+  [router](examples/router/) (route separation with `Route_t` + `use`),
+  [process](examples/process/main.cpp) (`vibe::process` runtime info),
+  [environment](examples/environment/main.cpp) (`.env` + session values
+  with `vibe::environment`)
 
 ## Support
 

@@ -29,6 +29,8 @@ Every server listens on `http://localhost:8080` unless it says otherwise.
 | [route-cooling](route-cooling/main.cpp) | Per-route cooldown with `web.guard()` and custom cooldown messages. |
 | [graceful-shutdown](graceful-shutdown/main.cpp) | Stopping the server with `setListenStatus(neo::STOP)`; `listenOne()` for one-shot servers. |
 | [router](router/) | Organizing routes: `Route_t` + `router.use()` and reusable `MiddlewareList`s. |
+| [process](process/main.cpp) | Node.js-style process info: `vibe::process.pwd`, `exec_path`, `pid`, `arch`, `uptime()`, `memory_usage()`, ... |
+| [environment](environment/main.cpp) | `.env` loaded from the executable directory: `vibe::environment.get`, typed `get_as<T>`, runtime session values with `set()`. |
 
 ## Try them
 
@@ -47,4 +49,8 @@ curl -F "title=hello" -F "doc=@note.txt" http://localhost:8080/upload
 
 # graceful-shutdown
 curl http://localhost:8080/shutdown
+
+# environment (copy examples/environment/.env next to the binary first;
+# it listens on port 9000, taken from the .env)
+curl http://localhost:9000/
 ```

@@ -6,6 +6,8 @@
 #include "config.hpp"
 #include "request/router_epoll.h"
 #include "util/enums.h"
+#include "util/process.h"
+#include "util/environment.h"
 #include <chrono>
 #include <memory>
 #include <string>
