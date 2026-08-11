@@ -134,92 +134,9 @@ class Server final : public Engine {
      static int setNonblocking(const int&);
 
      [[nodiscard]] inline string getResponse()  const override {
-           return buffereOd_data != nullptr ? *buffereOd_data : string{};
-      }
+            return buffereOd_data != nullptr ? *buffereOd_data : string{};
+       }
 };
-
-
-[[maybe_unused]] constexpr auto HTML = "text/html; charset=utf-8 ";
-constexpr auto JSON = "application/json ";
-
-struct [[maybe_unused]] WEB {
-
-    explicit WEB()= default;
-
-    [[maybe_unused]] static string json(const string& _txt, const string& status="200 OK") {
-        return vibe::http::Response{}
-            .status(status_code_of(status))
-            .type("application/json")
-            .body(_txt)
-            .str();
-     }
-
-
-    [[maybe_unused]] static string custom(const string& _txt, const string& type, const string& headers,  const string& status="200 OK"){
-
-        vibe::http::Response response;
-        response.status(status_code_of(status)).type(type);
-
-        size_t pos = 0;
-        while (pos < headers.size()) {
-            const size_t eol = headers.find('\n', pos);
-            std::string_view line = std::string_view(headers).substr(
-                pos, eol == string::npos ? eol : eol - pos);
-
-            if (const size_t colon = line.find(':'); colon != std::string_view::npos && colon > 0) {
-                std::string_view value = line.substr(colon + 1);
-                if (!value.empty() && value.front() == ' ')
-                    value.remove_prefix(1);
-                if (!value.empty() && value.back() == '\r')
-                    value.remove_suffix(1);
-                response.set(line.substr(0, colon), value);
-            }
-
-            if (eol == string::npos)
-                break;
-            pos = eol + 1;
-        }
-
-        return response.body(_txt).str();
-     }
-
-private:
-    // Legacy signature passes the status as a string ("200", "200 OK").
-    static int status_code_of(const string& status) {
-        int code = 200;
-        const char* first = status.data();
-        const char* last  = first + status.size();
-        if (const auto [ptr, ec] = std::from_chars(first, last, code);
-            ec == std::errc{} && ptr != first)
-            return code;
-        return 200;
-    }
-};
-
-template<class...P>
-struct HEADERS_MG {
-    HEADERS_MG()= default;
-    [[maybe_unused]] HEADERS_MG(std::initializer_list<P...>list): body(list) {}
-    vector<string> body;
-    [[maybe_unused]] string generate(){
-        string response;
-        for (auto &it : body) {
-            response += it + "\n";
-        }
-        return response;
-    }
-};
-
-using Headers = HEADERS_MG<string>;
-
-[[maybe_unused]] constexpr auto HTTP_ERROR = "HTTP/1.1 400 BAD\n"
-                           "Server: Vibe/1.0\n"
-                           "Content-Type: application/json\n"
-                           "Content-Length: 25\n"
-                           "Accept-Ranges: bytes\n"
-                           "Connection: close\n"
-                           "\n"
-                           "error!";
 
 
 #endif // !VIBE_SOCKETS_HPP

@@ -2,6 +2,11 @@
 
 #include "../include/vibe/util/secure_render.h"
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
 #include <fstream>
@@ -766,4 +771,471 @@ TEST_F(TestSuite, TestComposeTraversalOverHttp) {
 
      std::filesystem::remove(file);
  }
+
+
+// ---------------------------------------------------------------------------
+// JSON DOM (vibe::Json)
+// ---------------------------------------------------------------------------
+
+TEST(JsonUnit, SerializesNativeTypesInOrder) {
+     const auto dev = vibe::Json::object({
+         {"name",   "vibe"},
+         {"level",  20},
+         {"pi",     3.5},
+         {"active", true},
+         {"cache",  nullptr},
+         {"tags",   vibe::Json::array({"web", "http"})},
+         {"nested", vibe::Json::object({{"x", 1}})},
+     });
+     EXPECT_EQ(dev.dump(),
+         R"({"name":"vibe","level":20,"pi":3.5,"active":true,"cache":null,"tags":["web","http"],"nested":{"x":1}})");
+}
+
+TEST(JsonUnit, SerializesEmptyContainersAndInt64) {
+     EXPECT_EQ(vibe::Json::array({}).dump(), "[]");
+     EXPECT_EQ(vibe::Json::object({}).dump(), "{}");
+     EXPECT_EQ(vibe::Json(nullptr).dump(), "null");
+     EXPECT_EQ(vibe::Json(INT64_MAX).dump(), "9223372036854775807");
+
+     // numbers too big for int64 degrade to double on parse
+     const auto big = vibe::Json::parse("9223372036854775808");
+     ASSERT_TRUE(big.has_value());
+     EXPECT_TRUE(big->is_double());
+}
+
+TEST(JsonUnit, EscapesStrings) {
+     EXPECT_EQ(vibe::Json("a\"b\\c").dump(), R"("a\"b\\c")");
+     EXPECT_EQ(vibe::Json("line\nnext\ttab").dump(), R"("line\nnext\ttab")");
+     // remaining control chars become \u00XX
+     EXPECT_EQ(vibe::Json(string("x\1y", 3)).dump(), "\"x\\u0001y\"");
+}
+
+TEST(JsonUnit, TypedAccessAndLookup) {
+     const auto j = vibe::Json::parse(R"({"name":"vibe","level":20,"tags":["a","b"],"pi":3.5})");
+     ASSERT_TRUE(j.has_value());
+     EXPECT_TRUE(j->is_object());
+     EXPECT_EQ(j->size(), 4UL);
+
+     const auto* level = j->at("level");
+     ASSERT_TRUE(level != nullptr);
+     EXPECT_TRUE(level->is_int());
+     EXPECT_EQ(level->as_int(), 20);
+     EXPECT_EQ(level->as_double(), 20.0);
+
+     EXPECT_EQ(j->at("missing"), nullptr);
+     EXPECT_EQ(std::string(j->at("name")->as_string()), "vibe");
+
+     const auto* tags = j->at("tags");
+     ASSERT_TRUE(tags != nullptr && tags->is_array());
+     EXPECT_EQ(tags->size(), 2UL);
+     EXPECT_EQ(std::string(tags->at(1)->as_string()), "b");
+     EXPECT_EQ(tags->at(5), nullptr);
+
+     // fallbacks kick in on the wrong type
+     EXPECT_EQ(j->at("name")->as_int(7), 7);
+     EXPECT_TRUE(j->at("pi")->is_double());
+}
+
+TEST(JsonUnit, RoundTripIsStable) {
+     const string src = R"({"a":[1,2.5,"x",null,true],"b":{"c":-3},"u":"éè"})";
+     const auto first = vibe::Json::parse(src);
+     ASSERT_TRUE(first.has_value());
+     const auto second = vibe::Json::parse(first->dump());
+     ASSERT_TRUE(second.has_value());
+     EXPECT_EQ(first->dump(), second->dump());
+}
+
+TEST(JsonUnit, UnicodeEscapesToUtf8) {
+     const auto j = vibe::Json::parse(R"("é€\uD83D\uDE00")");
+     ASSERT_TRUE(j.has_value());
+     EXPECT_EQ(std::string(j->as_string()), "é€😀");
+}
+
+TEST(JsonUnit, RejectsInvalidJson) {
+     EXPECT_FALSE(vibe::Json::parse("").has_value());
+     EXPECT_FALSE(vibe::Json::parse("{").has_value());
+     EXPECT_FALSE(vibe::Json::parse("[1,]").has_value());
+     EXPECT_FALSE(vibe::Json::parse("{\"a\":01}").has_value());  // leading zero
+     EXPECT_FALSE(vibe::Json::parse("{\"a\" 1}").has_value());   // missing colon
+     EXPECT_FALSE(vibe::Json::parse("\"unterminated").has_value());
+     EXPECT_FALSE(vibe::Json::parse("\"bad\\xescape\"").has_value());
+     EXPECT_FALSE(vibe::Json::parse("\"\\uD800\"").has_value()); // lone surrogate
+     EXPECT_FALSE(vibe::Json::parse("true extra").has_value());  // trailing garbage
+     EXPECT_FALSE(vibe::Json::parse("01").has_value());
+
+     // recursion bomb: beyond the depth cap
+     const string bomb = string(300, '[') + string(300, ']');
+     EXPECT_FALSE(vibe::Json::parse(bomb).has_value());
+
+     // ...but a deep-yet-reasonable tree parses fine
+     const string deep = string(200, '[') + string(200, ']');
+     EXPECT_TRUE(vibe::Json::parse(deep).has_value());
+}
+
+TEST(JsonUnit, LegacyJsonSIsSafeNow) {
+     // alternating key/value still compiles; an odd trailing key is null
+     // instead of an out-of-bounds read
+     const JSON_s legacy = { "id", "01", "level", 20, "odd" };
+     EXPECT_EQ(legacy(), R"({"id":"01","level":20,"odd":null})");
+
+     // real nesting through the implicit conversion
+     const JSON_s nested = { "user", vibe::Json::object({{"name", "kevin"}}) };
+     EXPECT_EQ(nested(), R"({"user":{"name":"kevin"}})");
+
+     // braces inside strings are just data now, not corruption targets
+     const JSON_s tricky = { "code", "{ not json }" };
+     EXPECT_EQ(tricky(), R"({"code":"{ not json }"})");
+}
+
+
+ TEST_F(TestSuite, TestJsonDomOverHttp) {
+
+      Router router;
+      router.setPort(8099);
+
+      router.post("/", {[&](Query &http) {
+         const auto body = vibe::Json::parse(http.body.raw());
+         if (!body.has_value())
+             return http.json(R"({"error":"invalid json"})", 400);
+
+         const auto* a = body->at("a");
+         http.json(vibe::Json::object({
+             {"double", a != nullptr ? a->as_double() * 2 : 0.0},
+         }).dump());
+        }});
+
+      ISOLATE(
+           router.listenOne();
+      )
+
+      Veridic client("http://localhost:8099");
+      POST fields = { R"({"a": 21})" };
+      VHeaders hdrs = { "Content-Type: application/json" };
+
+      const string res = client.post(fields, hdrs, "/");
+      isolate_method.get();
+
+      EXPECT_EQ(res, R"({"double":42})");
+ }
+
+
+// ---------------------------------------------------------------------------
+// readFileX toolchain (RenderSecurity::cpp)
+// ---------------------------------------------------------------------------
+
+TEST(CppToolchainUnit, StandardIsConfigurable) {
+     // A requires-clause on a lambda is a hard error in C++17 mode.
+     const string file = "./tc_std.html";
+     { std::ofstream out(file); out << "X$ auto f = [](auto x) requires true { return x * 2; }; std::cout << f(21); $Y"; }
+
+     vibe::RenderSecurity sec; // legacy default: c++17
+     auto [body17, status17] = CppReader::processing(file, sec);
+     EXPECT_EQ(status17, "400");
+
+     sec.cpp.standard = "c++20";
+     auto [body20, status20] = CppReader::processing(file, sec);
+     EXPECT_EQ(status20, "200");
+     EXPECT_EQ(body20, "X42Y");
+
+     std::filesystem::remove(file);
+ }
+
+TEST(CppToolchainUnit, ExtraFlagsReachTheCompiler) {
+     const string file = "./tc_flags.html";
+     { std::ofstream out(file); out << "A$ std::cout << ANSWER; $B"; } // ANSWER undefined by default
+
+     vibe::RenderSecurity sec;
+     sec.cpp.compiler = "g++"; // bare names are resolved in the usual dirs
+     auto [plain, status_plain] = CppReader::processing(file, sec);
+     EXPECT_EQ(status_plain, "400");
+
+     sec.cpp.flags = {"-DANSWER=42"};
+     auto [defined, status_defined] = CppReader::processing(file, sec);
+     EXPECT_EQ(status_defined, "200");
+     EXPECT_EQ(defined, "A42B");
+
+     std::filesystem::remove(file);
+ }
+
+TEST(CppToolchainUnit, CacheSeparatesToolchains) {
+     // Same source, different flags: the second build must NOT get the
+     // first toolchain's cached binary.
+     const string file = "./tc_cache.html";
+     { std::ofstream out(file); out << "A$ std::cout << ANSWER; $B"; }
+
+     vibe::RenderSecurity sec;
+     sec.cpp.flags = {"-DANSWER=1"};
+     auto [one, status_one] = CppReader::processing(file, sec);
+     EXPECT_EQ(status_one, "200");
+     EXPECT_EQ(one, "A1B");
+
+     sec.cpp.flags = {"-DANSWER=2"};
+     auto [two, status_two] = CppReader::processing(file, sec);
+     EXPECT_EQ(status_two, "200");
+     EXPECT_EQ(two, "A2B");
+
+     std::filesystem::remove(file);
+ }
+
+TEST(CppToolchainUnit, BadCompilerPathFailsCleanly) {
+     const string file = "./tc_bad.html";
+     { std::ofstream out(file); out << "A$ std::cout << 1; $B"; }
+
+     vibe::RenderSecurity sec;
+     sec.cpp.compiler = "/no/such/g++";
+     auto [body, status] = CppReader::processing(file, sec);
+     EXPECT_EQ(status, "400");
+     EXPECT_NE(body.find("could not be compiled"), string::npos);
+
+     std::filesystem::remove(file);
+ }
+
+
+// ---------------------------------------------------------------------------
+// HTTP parser hardening (vibe::http::Message::inspect / parse)
+// ---------------------------------------------------------------------------
+
+using Msg     = vibe::http::Message;
+using Framing = vibe::http::Message::Framing;
+
+TEST(ParserHardeningUnit, InspectCompleteWithoutBody) {
+     const string wire = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+     const auto i = Msg::inspect(wire);
+     EXPECT_EQ(i.framing, Framing::Complete);
+     EXPECT_EQ(i.expected, wire.size());
+}
+
+TEST(ParserHardeningUnit, InspectWaitsForTheDeclaredBody) {
+     const string head = "POST / HTTP/1.1\r\nContent-Length: 10\r\n\r\n";
+     const auto i = Msg::inspect(head + "12345"); // 5 of 10 bytes
+     EXPECT_EQ(i.framing, Framing::Incomplete);
+     EXPECT_EQ(i.expected, head.size() + 10UL);
+
+     const auto done = Msg::inspect(head + "1234567890");
+     EXPECT_EQ(done.framing, Framing::Complete);
+}
+
+TEST(ParserHardeningUnit, ConflictingContentLengthIsSmuggling) {
+     const auto i = Msg::inspect("POST / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\n");
+     EXPECT_EQ(i.framing, Framing::BadRequest);
+}
+
+TEST(ParserHardeningUnit, DuplicateContentLengthWithSameValueIsLegal) {
+     const string wire = "POST / HTTP/1.1\r\nContent-Length: 4\r\nContent-Length: 4\r\n\r\npong";
+     const auto i = Msg::inspect(wire);
+     EXPECT_EQ(i.framing, Framing::Complete);
+
+     const auto msg = Msg::parse(wire);
+     ASSERT_TRUE(msg.has_value());
+     EXPECT_EQ(msg->body, "pong");
+     EXPECT_EQ(msg->content_length(), 4UL);
+}
+
+TEST(ParserHardeningUnit, GarbageContentLengthIsRejected) {
+     EXPECT_EQ(Msg::inspect("POST / HTTP/1.1\r\nContent-Length: 12x\r\n\r\n").framing, Framing::BadRequest);
+     EXPECT_EQ(Msg::inspect("POST / HTTP/1.1\r\nContent-Length: -3\r\n\r\n").framing,  Framing::BadRequest);
+     EXPECT_EQ(Msg::inspect("POST / HTTP/1.1\r\nContent-Length: \r\n\r\n").framing,    Framing::BadRequest);
+     // beyond size_t: numeric overflow is also a bad request
+     EXPECT_EQ(Msg::inspect("POST / HTTP/1.1\r\nContent-Length: 99999999999999999999999999\r\n\r\n").framing,
+               Framing::BadRequest);
+}
+
+TEST(ParserHardeningUnit, TransferEncodingIsNotSilentlyMisparsed) {
+     const auto i = Msg::inspect("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
+     EXPECT_EQ(i.framing, Framing::NotImplemented);
+}
+
+TEST(ParserHardeningUnit, HeaderFloodIsRejected) {
+     string wire = "GET / HTTP/1.1\r\n";
+     for (int n = 0; n < 101; ++n)
+         wire += "X-H" + std::to_string(n) + ": v\r\n";
+     wire += "\r\n";
+     EXPECT_EQ(Msg::inspect(wire).framing, Framing::TooManyHeaders);
+
+     // same flood without the terminator: rejected early, while reading
+     wire.pop_back(); wire.pop_back();
+     EXPECT_EQ(Msg::inspect(wire).framing, Framing::TooManyHeaders);
+}
+
+TEST(ParserHardeningUnit, ParseAcceptsOnlyStrictRequestLines) {
+     EXPECT_TRUE(Msg::parse("GET / HTTP/1.1\r\n\r\n").has_value());
+     EXPECT_TRUE(Msg::parse("GET /a/b?x=1 HTTP/1.0\nHost: h\n\n").has_value()); // legacy \n\n head
+
+     EXPECT_FALSE(Msg::parse("").has_value());
+     EXPECT_FALSE(Msg::parse("GARBAGE\r\n\r\n").has_value());                    // no spaces at all
+     EXPECT_FALSE(Msg::parse("GET /\r\n\r\n").has_value());                      // missing version
+     EXPECT_FALSE(Msg::parse("GET  / HTTP/1.1\r\n\r\n").has_value());            // empty target
+     EXPECT_FALSE(Msg::parse("GET / HTTP/1.1 EXTRA\r\n\r\n").has_value());       // four parts
+     EXPECT_FALSE(Msg::parse("GET / XYZ\r\n\r\n").has_value());                  // bogus version
+     EXPECT_FALSE(Msg::parse(string("G\x01""T / HTTP/1.1\r\n\r\n", 20)).has_value()); // control char in method
+}
+
+TEST(ParserHardeningUnit, MalformedHeaderLinesAreRejected) {
+     EXPECT_FALSE(Msg::parse("GET / HTTP/1.1\r\nNoColonHere\r\n\r\n").has_value());
+     EXPECT_FALSE(Msg::parse("GET / HTTP/1.1\r\nBad Name: x\r\n\r\n").has_value()); // space in the name
+     EXPECT_TRUE (Msg::parse("GET / HTTP/1.1\r\nGood-Name: x\r\n\r\n").has_value());
+}
+
+TEST(ParserHardeningUnit, BodyWithoutContentLengthIsIgnored) {
+     // RFC 9112 §6.3: no Content-Length and no Transfer-Encoding = empty body.
+     // Bytes after the head are NOT the body (and we close the connection,
+     // so they cannot be a pipelined request either).
+     const auto msg = Msg::parse("GET / HTTP/1.1\r\nHost: x\r\n\r\nGARBAGE");
+     ASSERT_TRUE(msg.has_value());
+     EXPECT_TRUE(msg->body.empty());
+     EXPECT_EQ(msg->content_length(), 0UL);
+}
+
+TEST(ParserHardeningUnit, BodyIsExactlyContentLengthBytes) {
+     const auto msg = Msg::parse("POST / HTTP/1.1\r\nContent-Length: 4\r\n\r\npongEXTRA");
+     ASSERT_TRUE(msg.has_value());
+     EXPECT_EQ(msg->body, "pong");
+
+     // defense in depth: fewer bytes than promised must not parse
+     EXPECT_FALSE(Msg::parse("POST / HTTP/1.1\r\nContent-Length: 100\r\n\r\nshort").has_value());
+}
+
+// Sends raw bytes to a one-shot server and returns the raw wire response.
+static string raw_exchange(const uint16_t port, const string& bytes) {
+     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+     if (fd < 0)
+         return {};
+
+     sockaddr_in addr{};
+     addr.sin_family = AF_INET;
+     addr.sin_port   = htons(port);
+     ::inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+     if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+         ::close(fd);
+         return {};
+     }
+
+     size_t sent = 0;
+     while (sent < bytes.size()) {
+         const ssize_t n = ::send(fd, bytes.data() + sent, bytes.size() - sent, MSG_NOSIGNAL);
+         if (n <= 0) {
+             ::close(fd);
+             return {};
+         }
+         sent += static_cast<size_t>(n);
+     }
+     ::shutdown(fd, SHUT_WR); // half-close: no more bytes will come
+
+     string response;
+     char buf[4096];
+     for (;;) {
+         const ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+         if (n <= 0)
+             break;
+         response.append(buf, static_cast<size_t>(n));
+     }
+     ::close(fd);
+     return response;
+}
+
+TEST_F(TestSuite, TestConflictingContentLengthRejected) {
+     Router router;
+     router.setPort(8100);
+     router.post("/", {[&](Query &http) { http.send("unreachable"); }});
+
+     ISOLATE( router.listenOne(); )
+     const string res = raw_exchange(8100, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\n");
+     isolate_method.get();
+
+     EXPECT_NE(res.find("HTTP/1.1 400 Bad Request"), string::npos);
+}
+
+TEST_F(TestSuite, TestTransferEncodingRejected) {
+     Router router;
+     router.setPort(8101);
+     router.post("/", {[&](Query &http) { http.send("unreachable"); }});
+
+     ISOLATE( router.listenOne(); )
+     const string res = raw_exchange(8101, "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
+     isolate_method.get();
+
+     EXPECT_NE(res.find("HTTP/1.1 501 Not Implemented"), string::npos);
+}
+
+TEST_F(TestSuite, TestTooManyHeadersRejected) {
+     Router router;
+     router.setPort(8102);
+     router.get("/", {[&](Query &http) { http.send("unreachable"); }});
+
+     string wire = "GET / HTTP/1.1\r\n";
+     for (int n = 0; n < 101; ++n)
+         wire += "X-H" + std::to_string(n) + ": v\r\n";
+     wire += "\r\n";
+
+     ISOLATE( router.listenOne(); )
+     const string res = raw_exchange(8102, wire);
+     isolate_method.get();
+
+     EXPECT_NE(res.find("HTTP/1.1 431 Request Header Fields Too Large"), string::npos);
+}
+
+TEST_F(TestSuite, TestMalformedRequestLineIsNotA404) {
+     Router router;
+     router.setPort(8103);
+     router.get("/", {[&](Query &http) { http.send("unreachable"); }});
+
+     ISOLATE( router.listenOne(); )
+     const string res = raw_exchange(8103, "GARBAGE\r\n\r\n");
+     isolate_method.get();
+
+     EXPECT_NE(res.find("HTTP/1.1 400 Bad Request"), string::npos);
+     EXPECT_EQ(res.find("not defined"), string::npos);
+}
+
+TEST_F(TestSuite, TestIncompleteBodyRejected) {
+     Router router;
+     router.setPort(8104);
+     router.post("/", {[&](Query &http) { http.send("unreachable"); }});
+
+     ISOLATE( router.listenOne(); )
+     // Promises 100 bytes, sends 5 and closes: not "whatever arrived".
+     const string res = raw_exchange(8104, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\nshort");
+     isolate_method.get();
+
+     EXPECT_NE(res.find("HTTP/1.1 400 Bad Request"), string::npos);
+}
+
+TEST_F(TestSuite, TestHugeDeclaredBodyRejectedEarly) {
+     Router router;
+     router.setPort(8105);
+     router.post("/", {[&](Query &http) { http.send("unreachable"); }});
+
+     ISOLATE( router.listenOne(); )
+     // 10 GiB announced, nothing sent: rejected from the head alone.
+     const string res = raw_exchange(8105, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10737418240\r\n\r\n");
+     isolate_method.get();
+
+     EXPECT_NE(res.find("HTTP/1.1 413"), string::npos);
+}
+
+TEST_F(TestSuite, TestDuplicateContentLengthAccepted) {
+     Router router;
+     router.setPort(8106);
+     router.post("/", {[&](Query &http) { http.send(http.body.raw()); }});
+
+     ISOLATE( router.listenOne(); )
+     const string res = raw_exchange(8106, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nContent-Length: 4\r\n\r\npong");
+     isolate_method.get();
+
+     EXPECT_NE(res.find("HTTP/1.1 200 OK"), string::npos);
+     EXPECT_TRUE(res.ends_with("pong"));
+}
+
+TEST_F(TestSuite, TestGarbageAfterHeadIsNotBody) {
+     Router router;
+     router.setPort(8107);
+     router.get("/", {[&](Query &http) { http.send(http.body.raw().empty() ? "empty" : "leaked"); }});
+
+     ISOLATE( router.listenOne(); )
+     const string res = raw_exchange(8107, "GET / HTTP/1.1\r\nHost: x\r\n\r\nGARBAGE");
+     isolate_method.get();
+
+     EXPECT_TRUE(res.ends_with("empty"));
+}
 

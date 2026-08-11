@@ -11,41 +11,17 @@
 
 namespace {
 
-    // Best-effort check for a fully received HTTP request: complete header
-    // block and, when present, the whole Content-Length body.
-    bool request_complete(const string &req) {
-
-        size_t header_end = req.find("\r\n\r\n");
-        size_t separator = 4;
-
-        if (header_end == string::npos) {
-            header_end = req.find("\n\n");
-            separator = 2;
+    // Maps the parser's framing verdict to a transport status. Message::inspect
+    // is the single source of truth for request completeness and validity.
+    RequestIO::ReadStatus to_read_status(const vibe::http::Message::Framing framing) noexcept {
+        using Framing = vibe::http::Message::Framing;
+        switch (framing) {
+            case Framing::Complete:        return RequestIO::ReadStatus::Ok;
+            case Framing::BadRequest:      return RequestIO::ReadStatus::BadRequest;
+            case Framing::TooManyHeaders:  return RequestIO::ReadStatus::TooManyHeaders;
+            case Framing::NotImplemented:  return RequestIO::ReadStatus::NotImplemented;
+            default:                       return RequestIO::ReadStatus::Failed; // Incomplete
         }
-
-        if (header_end == string::npos)
-            return false;
-
-        string headers = req.substr(0, header_end);
-        std::transform(headers.begin(), headers.end(), headers.begin(),
-                       [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-        constexpr auto content_length_key = "content-length:";
-        constexpr size_t key_length = 15; // strlen("content-length:")
-
-        const size_t key_pos = headers.find(content_length_key);
-        if (key_pos == string::npos)
-            return true;
-
-        const size_t value_begin = headers.find_first_not_of(" \t", key_pos + key_length);
-        if (value_begin == string::npos)
-            return true;
-
-        const long body_length = std::strtol(headers.c_str() + value_begin, nullptr, 10);
-        if (body_length <= 0)
-            return true;
-
-        return req.size() >= header_end + separator + static_cast<size_t>(body_length);
     }
 }
 
@@ -153,18 +129,23 @@ void RequestIO::HandleClient(const int event_fd) const {
 
     const ReadStatus status = ReadRequest(event_fd, raw_request);
 
-    if (status == ReadStatus::TooLarge) {
-        // Inform the client instead of silently dropping the connection.
-        base->sendResponse(vibe::http::Response{}
-                               .status(413)
-                               .type("application/json")
-                               .body(R"lit({"error":"payload too large"})lit")
-                               .str());
-        close(event_fd);
-        return;
-    }
-
     if (status != ReadStatus::Ok || raw_request.empty()) {
+        // Tell the client WHY instead of silently dropping the connection.
+        int code = 0;
+        const char* error = nullptr;
+        switch (status) {
+            case ReadStatus::TooLarge:       code = 413; error = "payload too large"; break;
+            case ReadStatus::BadRequest:     code = 400; error = "malformed request"; break;
+            case ReadStatus::TooManyHeaders: code = 431; error = "too many headers"; break;
+            case ReadStatus::NotImplemented: code = 501; error = "transfer encoding not supported"; break;
+            default: break; // Failed: the socket is broken, nothing can be sent
+        }
+        if (code != 0)
+            base->sendResponse(vibe::http::Response{}
+                                   .status(code)
+                                   .type("application/json")
+                                   .body(std::string(R"lit({"error":")lit") + error + R"lit("})lit")
+                                   .str());
         close(event_fd);
         return;
     }
@@ -188,14 +169,19 @@ RequestIO::ReadStatus RequestIO::ReadRequest(const int event_fd, string &out) co
             if (out.size() > config_.max_request_size)
                 return ReadStatus::TooLarge;
 
-            if (request_complete(out))
-                return ReadStatus::Ok;
-
-            continue;
+            const auto inspection = vibe::http::Message::inspect(out);
+            if (inspection.framing == vibe::http::Message::Framing::Incomplete) {
+                // The client promised a body bigger than the whole-request
+                // cap: reject right after the head instead of reading it all.
+                if (inspection.expected > config_.max_request_size)
+                    return ReadStatus::TooLarge;
+                continue;
+            }
+            return to_read_status(inspection.framing);
         }
 
         if (bytes == VB_OK)
-            return out.empty() ? ReadStatus::Failed : ReadStatus::Ok; // peer closed: use whatever arrived
+            break; // peer closed: the request must stand on its own
 
         if (errno == EINTR)
             continue;
@@ -210,11 +196,22 @@ RequestIO::ReadStatus RequestIO::ReadRequest(const int event_fd, string &out) co
             if (ready > 0 && (pfd.revents & (POLLIN | POLLHUP)))
                 continue;
 
-            return out.empty() ? ReadStatus::Failed : ReadStatus::Ok; // timeout: use whatever arrived
+            break; // inactivity timeout: the request must stand on its own
         }
 
         return ReadStatus::Failed;
     }
+
+    // The connection gave us everything it ever will. A request that is
+    // still Incomplete (e.g. a Content-Length body that never arrived) is
+    // not "whatever arrived": it is a malformed request.
+    if (out.empty())
+        return ReadStatus::Failed;
+
+    const auto inspection = vibe::http::Message::inspect(out);
+    return inspection.framing == vibe::http::Message::Framing::Incomplete
+               ? ReadStatus::BadRequest
+               : to_read_status(inspection.framing);
 }
 
 
@@ -255,6 +252,14 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
                     send_target = std::move(data);
                 }
             }
+        } else {
+            // The bytes were readable but are not an HTTP request: that is
+            // a 400, never a 404 (the route table is not the problem).
+            send_target = vibe::http::Response{}
+                              .status(400)
+                              .type("application/json")
+                              .body(R"lit({"error":"malformed request"})lit")
+                              .str();
         }
     } catch (const std::exception &e) {
         terminal("REQUEST PROCESSING ERROR: ", e.what());

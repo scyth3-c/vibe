@@ -88,51 +88,41 @@ public:
 
 
 struct utility_t {
-    static string prepare_basic(const string& _txt,
-                                const string& _type,
-                                const string& headers,
-                                const string& status = "200") {
-
+    // Builds the HTTP/1.1 wire response delivered to the client.
+    //
+    //   - `body` travels by value and is moved into the response: renders
+    //     and file reads reach the socket with zero extra copies.
+    //   - `type`/`headers` are views: string literals and vibe::mime::of()
+    //     results never materialize a temporary std::string.
+    //   - `status` is a plain int: no string round-trips at the call sites.
+    //
+    // Every header is forwarded to Response::set, which strips CR/LF, so a
+    // tainted value can never split the response (header injection).
+    [[nodiscard]] static string prepare(string body,
+                                        const std::string_view type,
+                                        const std::string_view headers,
+                                        const int status = 200) {
         vibe::http::Response response;
-        response.status(status_code_of(status)).type(_type);
-
-        // The legacy API hands over headers as a raw "Name: value\n..." block.
-        size_t pos = 0;
-        while (pos < headers.size()) {
-            const size_t eol = headers.find('\n', pos);
-            const std::string_view line = std::string_view(headers).substr(
-                pos, eol == string::npos ? eol : eol - pos);
-
-            if (const size_t colon = line.find(':'); colon != std::string_view::npos && colon > 0) {
-                std::string_view value = line.substr(colon + 1);
-                if (!value.empty() && value.front() == ' ')
-                    value.remove_prefix(1);
-                if (!value.empty() && value.back() == '\r')
-                    value.remove_suffix(1);
-                response.set(line.substr(0, colon), value);
-            }
-
-            if (eol == string::npos)
-                break;
-            pos = eol + 1;
-        }
-
-        response.body(_txt);
+        response.status(status).type(type);
+        apply_headers(response, headers);
+        response.body(std::move(body));
         return response.str();
     }
 
     [[maybe_unused]] static string guard_route(const std::chrono::duration<double>::rep seconds,
                                                string msg = "") {
 
-        const string body = R"lit({"message":")lit"
+        string body = R"lit({"message":")lit"
             + string(not msg.empty()
                          ? std::move(msg)
                          : "wait, this route has a " + std::to_string(static_cast<int>(seconds)) + " second cooldown")
             + R"lit("})lit";
 
-        return prepare_basic(body, "application/json", "", "401");
+        return prepare(std::move(body), "application/json", "", 401);
     }
 
+    // Bridge for the file-rendering family, which still reports its status
+    // as a string ("200", "404", ...). Unparseable input yields 0.
     [[maybe_unused]] static int toInt(const string& data) {
         int result = 0;
         const char* first = data.data();
@@ -144,28 +134,30 @@ struct utility_t {
     }
 
 private:
-    // Legacy code passes the status as a string ("200", "404", "200 OK").
-    static int status_code_of(const string& status) {
-        int code = 200;
-        const char* first = status.data();
-        const char* last  = first + status.size();
-        if (const auto [ptr, ec] = std::from_chars(first, last, code);
-            ec == std::errc{} && ptr != first)
-            return code;
-        return 200;
+    // The legacy API hands over headers as a raw "Name: value\n..." block;
+    // it is parsed in place with string_views: no per-line allocations.
+    static void apply_headers(vibe::http::Response& response, const std::string_view headers) {
+        size_t pos = 0;
+        while (pos < headers.size()) {
+            const size_t eol = headers.find('\n', pos);
+            const std::string_view line = headers.substr(
+                pos, eol == std::string_view::npos ? eol : eol - pos);
+
+            if (const size_t colon = line.find(':'); colon != std::string_view::npos && colon > 0) {
+                std::string_view value = line.substr(colon + 1);
+                if (!value.empty() && value.front() == ' ')
+                    value.remove_prefix(1);
+                if (!value.empty() && value.back() == '\r')
+                    value.remove_suffix(1);
+                response.set(line.substr(0, colon), value);
+            }
+
+            if (eol == std::string_view::npos)
+                break;
+            pos = eol + 1;
+        }
     }
 };
-
-
-[[maybe_unused]] constexpr auto ERROR_GET = "HTTP/1.1 404 BAD\n"
-                           "Server: Vibe/1.0\n"
-                           "Content-Type: application/json\n"
-                           "Cache-Control: Expires"
-                           "Content-Length: 37\n"
-                           "Accept-Ranges: bytes\n"
-                           "Connection: close\n"
-                           "\n"
-                           R"lit({"error":"this route is not defined"})lit";
 
 
 #endif // PARAMETERS_HPP

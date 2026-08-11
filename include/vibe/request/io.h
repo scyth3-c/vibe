@@ -32,7 +32,10 @@ class RequestIO {
 
     public:
 
-     enum class ReadStatus { Ok, TooLarge, Failed };
+     // Why a request read ended. Each non-Ok status maps to the HTTP
+     // error the client receives (413/400/431/501), except Failed, which
+     // means the socket itself broke and nothing can be sent back.
+     enum class ReadStatus { Ok, TooLarge, BadRequest, TooManyHeaders, NotImplemented, Failed };
 
     private:
     shared_ptr<std::vector<epoll_event>> events;

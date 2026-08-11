@@ -133,14 +133,29 @@ namespace vibe::http {
     }
 
     // A fully parsed HTTP/1.1 request message.
+    //
+    // Hardening rules (RFC 9112):
+    //   - request line is strictly METHOD SP TARGET SP HTTP/DIGIT.DIGIT
+    //   - a request without Content-Length has NO body: extra bytes after
+    //     the head are ignored (no pipelining: the connection is closed)
+    //   - the body is exactly Content-Length bytes; less is an error
+    //   - duplicated Content-Length is accepted only when every value
+    //     matches; conflicting or non-numeric values are rejected (400)
+    //   - Transfer-Encoding is not implemented: rejected with 501 instead
+    //     of being silently mis-parsed
+    //   - at most MAX_HEADERS header fields (431)
     class Message {
     public:
+        // Hard cap on header fields: far beyond any browser or API client,
+        // and a wall against header-flood abuse.
+        static constexpr size_t MAX_HEADERS = 100;
+
         std::string method;        // GET, POST, ...
         std::string target;        // raw request target, e.g. /index?id=2
         std::string path;          // target without query string or trailing '/'
         std::string query;         // raw query string (still percent-encoded)
         std::string version;       // e.g. HTTP/1.1
-        std::string body;          // message body (bounded by Content-Length when present)
+        std::string body;          // message body (exactly Content-Length bytes)
 
         // Header list preserving wire order and original name casing.
         std::vector<std::pair<std::string, std::string>> headers;
@@ -169,41 +184,103 @@ namespace vibe::http {
             return std::nullopt;
         }
 
-        [[nodiscard]] size_t content_length() const noexcept {
-            const std::string_view value = header("Content-Length");
-            size_t length = 0;
-            const auto* first = value.data();
-            const auto* last  = first + value.size();
-            if (const auto [ptr, ec] = std::from_chars(first, last, length);
-                ec == std::errc{} && ptr != first)
-                return length;
-            return 0;
+        // Validated Content-Length (0 when absent). Consistent by
+        // construction: parse() rejects anything ambiguous.
+        [[nodiscard]] size_t content_length() const noexcept { return content_length_; }
+
+        // ---- framing inspection -------------------------------------------
+
+        // How a raw (possibly partial) request buffer is framed.
+        enum class Framing {
+            Complete,       // ready for parse()
+            Incomplete,     // keep reading from the socket
+            BadRequest,     // 400: invalid or conflicting Content-Length
+            TooManyHeaders, // 431: more than MAX_HEADERS header fields
+            NotImplemented  // 501: Transfer-Encoding is not supported
+        };
+
+        struct Inspection {
+            Framing framing = Framing::Incomplete;
+            // Total request bytes once the head is known (head + declared
+            // body). 0 while the head has not fully arrived.
+            size_t  expected = 0;
+        };
+
+        // Inspects raw bytes WITHOUT building a Message. This is the single
+        // source of truth for "is the request complete?" shared by the
+        // socket read loop and parse() itself.
+        [[nodiscard]] static Inspection inspect(const std::string_view raw) noexcept {
+            const auto [head_end, separator] = head_bounds(raw);
+
+            if (head_end == std::string_view::npos) {
+                // Head still on the wire, but a flood of lines is already
+                // answer enough: reject without waiting for the terminator.
+                size_t lines = 0;
+                for (size_t p = raw.find('\n'); p != std::string_view::npos; p = raw.find('\n', p + 1))
+                    if (++lines > MAX_HEADERS + 1) // +1: the request line
+                        return {Framing::TooManyHeaders, 0};
+                return {Framing::Incomplete, 0};
+            }
+
+            const HeadScan scan = scan_head(raw.substr(0, head_end));
+            if (scan.too_many)
+                return {Framing::TooManyHeaders, 0};
+            if (scan.bad)
+                return {Framing::BadRequest, 0};
+            if (scan.transfer_encoding)
+                return {Framing::NotImplemented, 0};
+
+            const size_t base = head_end + separator;
+            size_t total = base;
+            if (scan.content_length > std::string_view::npos - base)
+                total = std::string_view::npos; // saturated: the caller's size cap rejects it
+            else
+                total = base + scan.content_length;
+
+            return {raw.size() >= total ? Framing::Complete : Framing::Incomplete, total};
         }
 
-        static std::optional<Message> parse(const std::string_view raw) {
-            if (raw.empty())
-                return std::nullopt;
+        // ---- parsing --------------------------------------------------------
+
+        // Parses a COMPLETE request (see inspect()). Malformed input yields
+        // nullopt; the transport layer answers 400/431/501 as appropriate.
+        [[nodiscard]] static std::optional<Message> parse(const std::string_view raw) {
+            const auto [head_end, separator] = head_bounds(raw);
+            if (head_end == std::string_view::npos)
+                return std::nullopt; // incomplete head: nothing trustworthy to parse
+
+            const std::string_view head = raw.substr(0, head_end);
+            const HeadScan scan = scan_head(head);
+            if (scan.bad || scan.transfer_encoding || scan.too_many)
+                return std::nullopt; // inspect() already pinpointed the reason
 
             Message msg;
-            size_t cursor = 0;
 
-            // ---- request line: METHOD SP TARGET SP VERSION ----
-            const size_t line_end = find_line_end(raw, 0);
-            const std::string_view request_line = raw.substr(0, line_end);
+            // ---- request line: METHOD SP TARGET SP HTTP/DIGIT.DIGIT ----
+            const size_t line_end = head.find('\n');
+            const std::string_view request_line = head.substr(0, line_end);
 
             const size_t sp1 = request_line.find(' ');
             if (sp1 == std::string_view::npos || sp1 == 0)
                 return std::nullopt;
-
             const size_t sp2 = request_line.find(' ', sp1 + 1);
-            msg.method  = std::string(request_line.substr(0, sp1));
-            msg.target  = std::string(request_line.substr(sp1 + 1, sp2 == std::string_view::npos ? sp2 : sp2 - sp1 - 1));
-            msg.version = sp2 == std::string_view::npos
-                              ? std::string{}
-                              : std::string(detail::trim(request_line.substr(sp2 + 1)));
+            if (sp2 == std::string_view::npos || sp2 == sp1 + 1)
+                return std::nullopt; // empty target or missing version
+            if (request_line.find(' ', sp2 + 1) != std::string_view::npos)
+                return std::nullopt; // exactly three parts, no more
 
-            if (msg.target.empty())
+            const std::string_view method_view = request_line.substr(0, sp1);
+            const std::string_view target_view = request_line.substr(sp1 + 1, sp2 - sp1 - 1);
+            std::string_view version_view = request_line.substr(sp2 + 1);
+            if (!version_view.empty() && version_view.back() == '\r')
+                version_view.remove_suffix(1);
+
+            if (!is_token(method_view) || !is_valid_target(target_view) || !is_valid_version(version_view))
                 return std::nullopt;
+
+            msg.method  = std::string(method_view);
+            msg.target  = std::string(target_view);
+            msg.version = std::string(version_view);
 
             // path / query split; strip a single trailing '/' like the legacy router did
             if (const size_t q = msg.target.find('?'); q != std::string::npos) {
@@ -215,53 +292,162 @@ namespace vibe::http {
             if (msg.path.size() > 1 && msg.path.back() == '/')
                 msg.path.pop_back();
 
-            cursor = advance_past_eol(raw, line_end);
+            // ---- header block (the head is already validated by scan_head) ----
+            if (line_end != std::string_view::npos) {
+                size_t pos = line_end + 1;
+                while (pos < head.size()) {
+                    const size_t eol = head.find('\n', pos);
+                    std::string_view line = head.substr(pos, eol == std::string_view::npos ? eol : eol - pos);
+                    pos = eol == std::string_view::npos ? head.size() : eol + 1;
 
-            // ---- header block ----
-            while (cursor < raw.size()) {
-                const size_t end = find_line_end(raw, cursor);
-                std::string_view line = raw.substr(cursor, end - cursor);
-                if (!line.empty() && line.back() == '\r')
-                    line.remove_suffix(1);
+                    if (!line.empty() && line.back() == '\r')
+                        line.remove_suffix(1);
+                    if (line.empty())
+                        continue;
 
-                if (line.empty()) { // blank line: body follows
-                    cursor = advance_past_eol(raw, end);
-                    break;
-                }
+                    const size_t colon = line.find(':');
+                    if (colon == std::string_view::npos || colon == 0)
+                        return std::nullopt; // malformed field line
 
-                if (const size_t colon = line.find(':'); colon != std::string_view::npos && colon > 0)
-                    msg.headers.emplace_back(std::string(detail::trim(line.substr(0, colon))),
+                    const std::string_view name = detail::trim(line.substr(0, colon));
+                    if (!is_token(name))
+                        return std::nullopt; // spaces/control chars in the name
+
+                    msg.headers.emplace_back(std::string(name),
                                              std::string(detail::trim(line.substr(colon + 1))));
-
-                if (end >= raw.size()) { // no blank line: request ends after headers
-                    cursor = raw.size();
-                    break;
                 }
-                cursor = advance_past_eol(raw, end);
             }
 
-            // ---- body (bounded by Content-Length when the client sent one) ----
-            std::string_view body = raw.substr(std::min(cursor, raw.size()));
-            if (const size_t declared = msg.content_length(); declared > 0 && declared < body.size())
-                body = body.substr(0, declared);
-            msg.body = std::string(body);
+            // ---- body: exactly Content-Length bytes, or none ----
+            msg.content_length_ = scan.content_length;
+            const size_t body_begin = head_end + separator;
+            if (scan.has_content_length && scan.content_length > 0) {
+                if (raw.size() - body_begin < scan.content_length)
+                    return std::nullopt; // promised bytes never arrived
+                msg.body = std::string(raw.substr(body_begin, scan.content_length));
+            }
 
             msg.parse_content_type();
             return msg;
         }
 
     private:
-        std::string content_type_storage_;
-        std::string_view content_type_;
+        size_t content_length_ = 0;
+        // Owning member: a string_view pointing into a sibling string member
+        // would dangle when a Message is moved (SSO buffers are copied inline).
+        std::string content_type_;
         std::vector<std::pair<std::string, std::string>> content_type_params_;
 
-        static size_t find_line_end(const std::string_view raw, const size_t from) noexcept {
-            const size_t nl = raw.find('\n', from);
-            return nl == std::string_view::npos ? raw.size() : nl;
+        // Result of scanning the header block for framing purposes.
+        struct HeadScan {
+            size_t content_length     = 0;
+            bool   has_content_length = false;
+            bool   bad                = false; // CL non-numeric or conflicting duplicates
+            bool   transfer_encoding  = false; // any Transfer-Encoding header
+            bool   too_many           = false; // > MAX_HEADERS fields
+        };
+
+        // Returns {head_bytes, separator_size} for the head terminator
+        // ("\r\n\r\n", or bare "\n\n" for legacy clients), or {npos, 0}
+        // when the head has not fully arrived yet.
+        static std::pair<size_t, size_t> head_bounds(const std::string_view raw) noexcept {
+            const size_t crlf = raw.find("\r\n\r\n");
+            const size_t lf   = raw.find("\n\n");
+            if (crlf == std::string_view::npos)
+                return lf == std::string_view::npos ? std::pair{lf, size_t{0}} : std::pair{lf, size_t{2}};
+            if (lf == std::string_view::npos)
+                return {crlf, size_t{4}};
+            return lf < crlf ? std::pair{lf, size_t{2}} : std::pair{crlf, size_t{4}};
         }
 
-        static size_t advance_past_eol(const std::string_view raw, const size_t line_end) noexcept {
-            return line_end >= raw.size() ? raw.size() : line_end + 1;
+        // Scans the header block line by line, validating only what framing
+        // needs: Content-Length and Transfer-Encoding. Zero allocations.
+        static HeadScan scan_head(const std::string_view head) noexcept {
+            HeadScan scan;
+
+            // Skip the request line.
+            size_t pos = head.find('\n');
+            if (pos == std::string_view::npos)
+                return scan;
+            ++pos;
+
+            size_t count = 0;
+            while (pos < head.size()) {
+                const size_t eol = head.find('\n', pos);
+                std::string_view line = head.substr(pos, eol == std::string_view::npos ? eol : eol - pos);
+                pos = eol == std::string_view::npos ? head.size() : eol + 1;
+
+                if (!line.empty() && line.back() == '\r')
+                    line.remove_suffix(1);
+                if (line.empty())
+                    continue;
+                if (++count > MAX_HEADERS) {
+                    scan.too_many = true;
+                    return scan;
+                }
+
+                const size_t colon = line.find(':');
+                if (colon == std::string_view::npos || colon == 0)
+                    continue; // malformed line: parse() rejects it; framing ignores it
+
+                const std::string_view name  = detail::trim(line.substr(0, colon));
+                const std::string_view value = detail::trim(line.substr(colon + 1));
+
+                if (detail::iequals(name, "content-length")) {
+                    size_t parsed = 0;
+                    const char* first = value.data();
+                    const char* last  = first + value.size();
+                    const auto [ptr, ec] = std::from_chars(first, last, parsed);
+                    // Whole value must be digits: no junk, no overflow.
+                    if (ec != std::errc{} || ptr != last) {
+                        scan.bad = true;
+                        return scan;
+                    }
+                    // Duplicates are legal only when every value matches
+                    // (RFC 9112 §6.3); a mismatch is a smuggling attempt.
+                    if (scan.has_content_length && scan.content_length != parsed) {
+                        scan.bad = true;
+                        return scan;
+                    }
+                    scan.has_content_length = true;
+                    scan.content_length     = parsed;
+                } else if (detail::iequals(name, "transfer-encoding")) {
+                    scan.transfer_encoding = true; // not supported: reject early
+                    return scan;
+                }
+            }
+            return scan;
+        }
+
+        // RFC 9110 tchar: method and header names are tokens.
+        static bool is_token(const std::string_view s) noexcept {
+            if (s.empty())
+                return false;
+            for (const char c : s) {
+                const auto u = static_cast<unsigned char>(c);
+                if (!(std::isalnum(u) || c == '!' || c == '#' || c == '$' || c == '%'
+                      || c == '&' || c == '\'' || c == '*' || c == '+' || c == '-'
+                      || c == '.' || c == '^' || c == '_' || c == '`' || c == '|' || c == '~'))
+                    return false;
+            }
+            return true;
+        }
+
+        // No spaces or control characters in the request target.
+        static bool is_valid_target(const std::string_view target) noexcept {
+            if (target.empty())
+                return false;
+            for (const char c : target)
+                if (const auto u = static_cast<unsigned char>(c); u <= 0x20 || u == 0x7f)
+                    return false;
+            return true;
+        }
+
+        static bool is_valid_version(const std::string_view v) noexcept {
+            return v.size() == 8 && v.starts_with("HTTP/")
+                && std::isdigit(static_cast<unsigned char>(v[5]))
+                && v[6] == '.'
+                && std::isdigit(static_cast<unsigned char>(v[7]));
         }
 
         void parse_content_type() {
@@ -270,8 +456,7 @@ namespace vibe::http {
                 return;
 
             const size_t semi = value.find(';');
-            content_type_storage_ = detail::lower(detail::trim(value.substr(0, semi)));
-            content_type_ = content_type_storage_;
+            content_type_ = detail::lower(detail::trim(value.substr(0, semi)));
 
             // parse "; key=value" parameters (boundary, charset, ...)
             size_t pos = semi == std::string_view::npos ? value.size() : semi + 1;

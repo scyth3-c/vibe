@@ -8,62 +8,62 @@ void    Query::lock()    noexcept                         {     next_enable = fa
 
 
 void Query::json(const string& _txt, const std::function<void()>& callback) noexcept {
-    last = utility_t::prepare_basic(_txt, "application/json", headers);
+    last = utility_t::prepare(_txt, "application/json", headers);
     callback();
 }
 void Query::html(const string& _txt,  const std::function<void()>& callback) noexcept {
-    last = utility_t::prepare_basic(_txt, "text/html", headers);
+    last = utility_t::prepare(_txt, "text/html", headers);
     callback();
 }
 void  Query::send(const string& _txt,  const std::function<void()>& callback) noexcept {
-     last = utility_t::prepare_basic(_txt, "text/plain", headers);
+     last = utility_t::prepare(_txt, "text/plain", headers);
      callback();
 }
 void Query::json(const string& _txt, const int status, const std::function<void()>& callback) noexcept {
-    last = utility_t::prepare_basic(_txt, "application/json", headers, std::to_string(status));
+    last = utility_t::prepare(_txt, "application/json", headers, status);
     callback();
 }
 void Query::html(const string& _txt, const int status,  const std::function<void()>& callback) noexcept {
-    last = utility_t::prepare_basic(_txt, "text/html", headers,  std::to_string(status));
+    last = utility_t::prepare(_txt, "text/html", headers, status);
     callback();
 }
 void  Query::send(const string& _txt,const int status,  const std::function<void()>& callback) noexcept {
-     last = utility_t::prepare_basic(_txt, "text/plain", headers,  std::to_string(status));
+     last = utility_t::prepare(_txt, "text/plain", headers, status);
      callback();
 }
 
 void  Query::readFile(const string& path,const string& type, const std::function<void()>& callback) noexcept {
     auto [data, status] = BasicRead::processing(path, render_sec);
-    last = utility_t::prepare_basic(data, type, headers, status);
+    last = utility_t::prepare(std::move(data), type, headers, utility_t::toInt(status));
     callback();
 }
 void  Query::readFile(const string& path, const std::function<void()>& callback) noexcept {
     auto [data, status] = BasicRead::processing(path, render_sec);
-    last = utility_t::prepare_basic(data, string(vibe::mime::of(path)), headers, status);
+    last = utility_t::prepare(std::move(data), vibe::mime::of(path), headers, utility_t::toInt(status));
     callback();
 }
 void  Query::file(const string& path, const std::function<void()>& callback) noexcept {
     auto [data, status] = BasicRead::processing(path, render_sec);
-    last = utility_t::prepare_basic(data, string(vibe::mime::of(path)), headers, status);
+    last = utility_t::prepare(std::move(data), vibe::mime::of(path), headers, utility_t::toInt(status));
     callback();
 }
 void  Query::readFileX(const string& path,const string& type, const std::function<void()>& callback) noexcept {
     auto [data, status] = CppReader::processing(path, render_sec);
-    last = utility_t::prepare_basic(data, type, headers, status);
+    last = utility_t::prepare(std::move(data), type, headers, utility_t::toInt(status));
     callback();
 }
 
 void  Query::compose(const string& path, const int reserve, const std::function<void()>& callback) noexcept {
-    auto[data, status] = MgReader::processing(path, reserve, render_sec);
-    last = utility_t::prepare_basic(data, "text/html" , headers, status);
+    auto [data, status] = MgReader::processing(path, reserve, render_sec);
+    last = utility_t::prepare(std::move(data), "text/html", headers, utility_t::toInt(status));
     callback();
 }
 
 void  Query::render(const string& path, const std::function<dataRender(dataRender& data)>& callback) noexcept {
-
- auto tasty_temp = std::make_unique<dataRender>(callback);
- last = utility_t::prepare_basic(tasty_temp->render(path, render_sec), "text/html", headers);
- tasty_temp.reset();
+    // Stack-allocated renderer: the rendered body is a temporary and is
+    // moved straight into the response (no heap, no copies, nothing to leak).
+    dataRender renderer(callback);
+    last = utility_t::prepare(renderer.render(path, render_sec), "text/html", headers);
 }
 
 void Query::setHeaders(const string& _body) noexcept {

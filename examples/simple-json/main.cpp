@@ -1,32 +1,61 @@
 #include <vibe/vibe.h>
 
+//
+// vibe::Json: a real JSON tree (DOM) — native types, arrays, proper
+// nesting and correct string escaping, with a strict parser included.
+//
+//   curl http://localhost:8080/
+//   curl -X POST http://localhost:8080/sum -H "Content-Type: application/json" -d '{"a": 2, "b": 3.5}'
+//
 int main() {
 
     Router router;
     router.setPort(8080);
 
-    // The use of JSON_s is not recommended
-    // Whenever you can, install or create your library for specialized json management.
 
-    router.get("/",{[&](Query &web) {
-        JSON_s id = {
-                "id", "01",
-                "token", "0x4b"
-        },
+    router.get("/",{[](Query &web) {
 
-                kevin = {
-                "name", "kevin",
-                "lastname", "bohorquez",
-                "age", "100",
-                "id", id()
-        },
+        const auto dev = vibe::Json::object({
+            {"target", "123"},
+            {"lang",   "c++"},
+            {"level",  20},          // numbers stay numbers
+            {"active", true},        // booleans stay booleans
+            {"cache",  nullptr},     // null
+            {"tags",   vibe::Json::array({"web", "http", "linux"})},
+            {"dev", vibe::Json::object({ // real nesting
+                {"name",     "kevin"},
+                {"lastname", "bohorquez"},
+                {"age",      100},
+            })},
+        });
 
-                dev = {
-                "target", "123",
-                "lang",  "c++",
-                "dev",  kevin()
-        };
-        web.json(dev());
+        web.json(dev.dump());
+    }});
+
+
+    // parsing: validate and read a JSON body safely
+    router.post("/sum",{[](Query &web) {
+
+        const auto body = vibe::Json::parse(web.body.raw());
+        if (!body.has_value())
+            return web.json(R"({"error":"invalid json"})", 400);
+
+        // at() returns nullptr when the key is absent or not an object
+        const auto* a = body->at("a");
+        const auto* b = body->at("b");
+        if (a == nullptr || b == nullptr || !a->is_number() || !b->is_number())
+            return web.json(R"({"error":"expected numbers a and b"})", 400);
+
+        web.json(vibe::Json::object({
+            {"result", a->as_double() + b->as_double()},
+        }).dump());
+    }});
+
+
+    // The legacy JSON_s facade still compiles, now implemented safely:
+    const JSON_s legacy = { "id", "01", "token", "0x4b" };
+    router.get("/legacy",{[legacy](Query &web) {
+        web.json(legacy());
     }});
 
 

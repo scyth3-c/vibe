@@ -64,6 +64,9 @@ public:
     Vibe& setMaxQueueSize(size_t max_queue_size) noexcept;
     Vibe& setBacklog(int backlog) noexcept;
     Vibe& setBufferSize(int size) noexcept;
+    // Toolchain used to compile readFileX templates:
+    //   router.setCppToolchain({ .compiler = "g++-12", .standard = "c++20" });
+    Vibe& setCppToolchain(const vibe::CppToolchain& toolchain) noexcept;
 
     int setPort(uint16_t) noexcept;
     [[nodiscard]] [[maybe_unused]] inline uint16_t getPort() const noexcept{
@@ -247,6 +250,12 @@ Vibe<T>& Vibe<T>::setBufferSize(const int size) noexcept {
     config_.buffer_size = size;
     if (tcpControl != nullptr)
         tcpControl->setBuffer(size);
+    return *this;
+}
+
+template <class T>
+Vibe<T>& Vibe<T>::setCppToolchain(const vibe::CppToolchain& toolchain) noexcept {
+    config_.render.cpp = toolchain;
     return *this;
 }
 
