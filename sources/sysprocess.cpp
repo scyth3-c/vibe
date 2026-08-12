@@ -52,9 +52,14 @@ namespace {
             _Exit(127);
 
         // Do not leak server fds (listening socket, epoll, files) into the
-        // child: everything above stderr goes away.
-        const long max_fd = std::min(sysconf(_SC_OPEN_MAX), 4096L);
-        for (long fd = 3; fd < max_fd; ++fd)
+        // child: everything above stderr goes away. sysconf() may return -1
+        // ("indeterminate"): fall back to a sane bound instead of skipping.
+        long open_max = sysconf(_SC_OPEN_MAX);
+        if (open_max < 0)
+            open_max = 4096;
+        if (open_max > 4096)
+            open_max = 4096;
+        for (long fd = 3; fd < open_max; ++fd)
             close(static_cast<int>(fd));
     }
 
@@ -112,12 +117,17 @@ int neosys::process::run_command(const std::vector<const char*> &args,
         // ---- child ----
         child_setup(opts);
 
-        std::vector<char*> mutable_args;
-        mutable_args.reserve(args.size());
-        for (const char* arg : args) {
-            mutable_args.push_back(const_cast<char*>(arg));
-        }
-        mutable_args.push_back(nullptr);
+        // No heap allocations between fork() and execve(): malloc is not
+        // async-signal-safe and another worker thread may hold the arena
+        // lock at the moment of the fork (deadlock). A stack array is enough.
+        constexpr size_t MAX_ARGS = 256;
+        if (args.size() >= MAX_ARGS)
+            _Exit(127);
+
+        std::array<char*, MAX_ARGS> argv{};
+        for (size_t i = 0; i < args.size(); ++i)
+            argv[i] = const_cast<char*>(args[i]);
+        argv[args.size()] = nullptr;
 
         const int fd = open(_path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0600);
         if (fd == VB_NVALUE) {
@@ -135,7 +145,7 @@ int neosys::process::run_command(const std::vector<const char*> &args,
         close(fd);
 
         const std::array<const char*, 2> export_path = {path.c_str(), nullptr};
-        if (execve(mutable_args[0], mutable_args.data(),  const_cast<char* const*>(export_path.data())) == VB_NVALUE) {
+        if (execve(argv[0], argv.data(), const_cast<char* const*>(export_path.data())) == VB_NVALUE) {
             _Exit(127);
         }
     }
@@ -149,7 +159,15 @@ std::string neosys::process::readFile(const std::string &path, char separator) {
     if (!reader.is_open())
         return {};
 
-    std::string body{std::istreambuf_iterator<char>(reader), std::istreambuf_iterator<char>()};
+    // Chunked read: works for regular files and for size-lying pseudo-files
+    // (/proc), and does not trip the istreambuf_iterator null-dereference
+    // false positive that libstdc++ emits at -O3.
+    std::string body;
+    std::array<char, 16384> chunk{};
+    while (reader) {
+        reader.read(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        body.append(chunk.data(), static_cast<size_t>(reader.gcount()));
+    }
 
     if (separator != '\0')
         std::replace(body.begin(), body.end(), '\n', separator);
@@ -158,17 +176,11 @@ std::string neosys::process::readFile(const std::string &path, char separator) {
 }
 
 int neosys::process::writeFile(const std::string &path, const std::string &content) {
-    try {
-        std::ofstream write_stream;
-        write_stream.open(path.c_str());
-
-        for (const auto &it : content)
-            write_stream << it;
-
-        write_stream.close();
-        return VB_OK;
-    }catch (std::exception &e) {
-        std::cerr << e.what() << std::endl;
+    std::ofstream write_stream(path, std::ios::binary);
+    if (!write_stream.is_open())
         return VB_NVALUE;
-    }
+
+    write_stream.write(content.data(), static_cast<std::streamsize>(content.size()));
+    write_stream.close();
+    return write_stream.good() ? VB_OK : VB_NVALUE;
 }

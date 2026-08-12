@@ -50,6 +50,13 @@ using enums::neo;
         listen_status_(enums::neo::eStatus::START)
         {}
 
+        ~RouterEpoll() {
+            // epoll_fd is owned here: getMainProcess() resets it to -1 after
+            // closing, so a router that never listened does not leak the fd.
+            if (epoll_fd >= 0)
+                close(epoll_fd);
+        }
+
 
         auto InitListenProcess() {
             if (connection->on() != MG_OK)
@@ -57,16 +64,22 @@ using enums::neo;
 
             file_descriptor = connection->getDescription();
 
-            if(file_descriptor < 0)
-                throw std::runtime_error(VB_MAIN_THREAD);
-
-            if(Server::setNonblocking(file_descriptor) == MG_ERROR) {
-                close(file_descriptor);
+            if(file_descriptor < 0) {
+                connection->Close();
                 throw std::runtime_error(VB_MAIN_THREAD);
             }
 
-            if (epoll_fd == -1)
+            if(Server::setNonblocking(file_descriptor) == MG_ERROR) {
+                connection->Close();
+                file_descriptor = -1;
+                throw std::runtime_error(VB_MAIN_THREAD);
+            }
+
+            if (epoll_fd == -1) {
+                connection->Close();
+                file_descriptor = -1;
                 throw std::range_error(VB_EPOLL_RANGE);
+            }
         }
 
 
@@ -98,6 +111,9 @@ using enums::neo;
 
                 if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, file_descriptor, &event) == VB_NVALUE) {
                     close(epoll_fd);
+                    epoll_fd = -1;
+                    connection->Close();
+                    file_descriptor = -1;
                     throw std::range_error(VB_EPOLL_CTL);
                 }
                 request_t = make_shared<RequestIO>(events, _routes, file_descriptor, epoll_fd, connection, config);
@@ -123,7 +139,11 @@ using enums::neo;
                 // request_t joins the pool, so in-flight responses finish first.
                 request_t.reset();
                 close(epoll_fd);
-                close(file_descriptor);
+                epoll_fd = -1;
+                // Close through the owner so its descriptor state is cleared:
+                // a raw close() here would leave the Server holding a stale fd.
+                connection->Close();
+                file_descriptor = -1;
         }
 
         void setListenStatus(const neo::eStatus _status) {

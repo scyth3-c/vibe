@@ -7,9 +7,15 @@
 Engine::Engine(const uint16_t port) : PORT(port) {}
 
 int Server::Close() {
-     try {   
+     try {
 
-          if (close(*socket_id) < 0) {
+          if (socket_id == nullptr)
+               return MG_OK; // nothing to close
+
+          const int fd = *socket_id;
+          socket_id.reset(); // invalidate first: a second Close() can never double-close
+
+          if (fd >= 0 && close(fd) < 0) {
                throw std::range_error("Failed to close socket");
           }
           return MG_OK;
@@ -22,8 +28,8 @@ int Server::Close() {
 
 int Engine::setPort(const uint16_t xPort) {
      try {
+          if(xPort == 0) throw std::range_error("Failed to set port");
           PORT = xPort;
-          if(PORT <= 0) throw std::range_error("Failed to set port");
           return MG_OK;
      }
      catch (const std::exception &e) {
@@ -51,11 +57,10 @@ int Engine::getPort() const {
 
 int Engine::setBuffer(int size) {
      try {
-          if (buffer_size == nullptr) {
-               buffer_size = make_shared<int>(size);
-          }
+          if (size <= 0)
+               throw std::range_error("failed to set buffer_size");
           buffer_size = std::make_shared<int>(size);
-          if(*buffer_size != size) throw std::range_error("filed to set buffer_size");
+          if(*buffer_size != size) throw std::range_error("failed to set buffer_size");
           return MG_OK;
      }
      catch (const std::exception &e) {
@@ -68,10 +73,8 @@ int Engine::setBuffer(int size) {
 
 void Server::setSessions(int max) {
      try {
-          if (static_sessions == nullptr) {
-               static_sessions = make_shared<int>(max);
-               return;
-          }
+          if (max <= 0)
+               throw std::range_error("Failed to set sessions");
           static_sessions = std::make_shared<int>(max);
           if(*static_sessions != max) throw std::range_error("Failed to set sessions");
      }
@@ -95,10 +98,19 @@ int Server::setNonblocking(const int& socket_id) {
 int Server::on() {
      try {
 
-         socket_id = make_shared<int>(socket(DOMAIN, TYPE, PROTOCOL));
-         if (*socket_id == MG_ERROR) {
+         // A Server can be re-used: drop any stale descriptor first so a
+         // second on() never leaks the previous listening socket.
+         if (socket_id != nullptr) {
+              if (*socket_id >= 0)
+                   close(*socket_id);
+              socket_id.reset();
+         }
+
+         const int fd = socket(DOMAIN, TYPE, PROTOCOL);
+         if (fd < 0) {
              throw std::range_error("Failed to create domain socket");
          }
+         socket_id = make_shared<int>(fd);
 
          if (setsockopt(*socket_id,
                         SOL_SOCKET,
@@ -135,6 +147,12 @@ int Server::on() {
          return MG_OK;
      }
      catch (const std::exception &e) {
+          // Never leave a half-open listening socket behind on failure.
+          if (socket_id != nullptr) {
+               if (*socket_id >= 0)
+                    close(*socket_id);
+               socket_id.reset();
+          }
           std::cerr << e.what() << '\n';
           return MG_ERROR;
      }
@@ -142,16 +160,24 @@ int Server::on() {
 
 void Server::getResponseProcessing() {
     try {
+        if (socket_id == nullptr || buffer_size == nullptr || *buffer_size <= 0)
+            throw std::range_error("response is empty");
+
         string base;
         vector<char> buffer;
-        buffer.resize(*buffer_size);
+        buffer.resize(static_cast<size_t>(*buffer_size));
 
-        const auto total_bytes = read(*socket_id, buffer.data(), *buffer_size);
+        const ssize_t total_bytes = read(*socket_id, buffer.data(), buffer.size());
+        if (total_bytes <= 0)
+            throw std::range_error("response is empty");
 
-        for (auto it = 0; it <= total_bytes; it++) {
+        // Strict '<': reading buffer[total_bytes] would touch one element
+        // past the payload (and run off the allocation when the read filled
+        // the whole buffer).
+        for (ssize_t it = 0; it < total_bytes; it++) {
             if (buffer[it] == 0)
                 break;
-            if(buffer[it] == UnCATCH_ERROR_CH)
+            if(static_cast<int>(buffer[it]) == UnCATCH_ERROR_CH)
                 continue;
             if (buffer[it] == 10)
                 continue;
@@ -164,7 +190,7 @@ void Server::getResponseProcessing() {
 }
 
 void Server::setResponse(const std::array<char,DEF_BUFFER_SIZE> &buffer) {
-     if( std::string raw(buffer.begin(), buffer.size()) ; !raw.empty()) {
+     if( std::string raw(buffer.data(), buffer.size()) ; !raw.empty()) {
           buffereOd_data = make_shared<string>(raw);
      }
 }

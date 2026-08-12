@@ -1,4 +1,7 @@
-#include "../include/vibe/vibe.h"
+#include <vibe/vibe.h>
+
+using vibe::process;
+using std::string;
 
 int main() {
 
@@ -7,7 +10,8 @@ int main() {
 
     router.get("/",{[&](Query &web) {
 
-        web.readFileX("./cpp.html", "text/html");
+        string ruta = process.pwd;
+        web.readFileX(ruta + "/cpp.html", "text/html");
 
     }});
 

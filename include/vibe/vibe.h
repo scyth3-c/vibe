@@ -66,14 +66,15 @@ public:
     Vibe& setMaxQueueSize(size_t max_queue_size) noexcept;
     Vibe& setBacklog(int backlog) noexcept;
     Vibe& setBufferSize(int size) noexcept;
+
     // Toolchain used to compile readFileX templates:
     //   router.setCppToolchain({ .compiler = "g++-12", .standard = "c++20" });
     Vibe& setCppToolchain(const vibe::CppToolchain& toolchain) noexcept;
 
     int setPort(uint16_t) noexcept;
     [[nodiscard]] [[maybe_unused]] inline uint16_t getPort() const noexcept{
-        constexpr uint16_t min_port = static_cast<uint16_t>(neo::MIN_PORT);
-        constexpr uint16_t default_port = static_cast<uint16_t>(neo::DEF_PORT);
+        constexpr auto min_port = static_cast<uint16_t>(neo::MIN_PORT);
+        constexpr auto default_port = static_cast<uint16_t>(neo::DEF_PORT);
         return config_.port >= min_port ? config_.port : default_port;
     };
     void listen();
@@ -188,9 +189,6 @@ template <class T>
 Vibe<T>& Vibe<T>::configure(const vibe::Config& config) noexcept {
     const uint16_t previous_port = config_.port;
     config_ = config;
-    // A zero/default port in the new config means "keep the current one";
-    // otherwise router.setPort(8080); router.configure({...}) would silently
-    // move the server back to the default port.
     if (config_.port < static_cast<uint16_t>(neo::MIN_PORT))
         config_.port = previous_port;
     applyNetworkConfig();
@@ -265,8 +263,8 @@ template <class T>
 void Vibe<T>::applyNetworkConfig() noexcept {
     if (tcpControl == nullptr)
         return;
-    constexpr uint16_t min_port = static_cast<uint16_t>(neo::MIN_PORT);
-    constexpr uint16_t default_port = static_cast<uint16_t>(neo::DEF_PORT);
+    constexpr auto min_port = static_cast<uint16_t>(neo::MIN_PORT);
+    constexpr auto default_port = static_cast<uint16_t>(neo::DEF_PORT);
     tcpControl->setBuffer(config_.buffer_size);
     tcpControl->setPort(config_.port >= min_port ? config_.port : default_port);
     tcpControl->setSessions(config_.backlog);

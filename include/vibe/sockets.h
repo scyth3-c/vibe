@@ -60,7 +60,7 @@ class Engine {
                    <int> 
                          socket_id = nullptr,
                          state_receptor = nullptr,
-                         address_len = make_shared<int>(sizeof(address)),
+                         address_len = make_shared<int>(static_cast<int>(sizeof(address))),
                          option_mame = make_shared<int>(0x1),
                          buffer_size = make_shared<int>(DEF_BUFFER_SIZE);
     public:
@@ -109,7 +109,9 @@ class Server final : public Engine {
      int on() override;
      int Close() override;
 
-     [[maybe_unused]] [[nodiscard]] inline int getDescription() const {  return *socket_id;  }
+     [[maybe_unused]] [[nodiscard]] inline int getDescription() const {
+          return socket_id != nullptr ? *socket_id : -1;
+     }
      [[maybe_unused]] inline shared_ptr<int> getSocketId() { return socket_id; }
      [[maybe_unused]] inline void setSocketId(int const identity) { socket_id = std::make_shared<int>(identity); }
 
