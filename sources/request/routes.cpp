@@ -1,4 +1,4 @@
-#include "../../include/vibe/routes.hpp"
+#include "../../include/vermell/routes.hpp"
 
 
 string  Query::getData() const noexcept                   {     return last;     }
@@ -39,12 +39,12 @@ void  Query::readFile(const string& path,const string& type, const std::function
 }
 void  Query::readFile(const string& path, const std::function<void()>& callback) noexcept {
     auto [data, status] = BasicRead::processing(path, render_sec);
-    last = utility_t::prepare(std::move(data), vibe::mime::of(path), headers, utility_t::toInt(status));
+    last = utility_t::prepare(std::move(data), vermell::mime::of(path), headers, utility_t::toInt(status));
     callback();
 }
 void  Query::file(const string& path, const std::function<void()>& callback) noexcept {
     auto [data, status] = BasicRead::processing(path, render_sec);
-    last = utility_t::prepare(std::move(data), vibe::mime::of(path), headers, utility_t::toInt(status));
+    last = utility_t::prepare(std::move(data), vermell::mime::of(path), headers, utility_t::toInt(status));
     callback();
 }
 void  Query::readFileX(const string& path,const string& type, const std::function<void()>& callback) noexcept {
@@ -52,10 +52,15 @@ void  Query::readFileX(const string& path,const string& type, const std::functio
     last = utility_t::prepare(std::move(data), type, headers, utility_t::toInt(status));
     callback();
 }
+void  Query::readFileX(const string& path, const std::function<void()>& callback) noexcept {
+    auto [data, status] = CppReader::processing(path, render_sec);
+    last = utility_t::prepare(std::move(data), vermell::mime::of(path), headers, utility_t::toInt(status));
+    callback();
+}
 
 void  Query::compose(const string& path, const int reserve, const std::function<void()>& callback) noexcept {
-    auto [data, status] = MgReader::processing(path, reserve, render_sec);
-    last = utility_t::prepare(std::move(data), "text/html", headers, utility_t::toInt(status));
+    auto [data, status] = VerReader::processing(path, reserve, render_sec);
+    last = utility_t::prepare(std::move(data), vermell::mime::of(path), headers, utility_t::toInt(status));
     callback();
 }
 
@@ -63,7 +68,7 @@ void  Query::render(const string& path, const std::function<dataRender(dataRende
     // Stack-allocated renderer: the rendered body is a temporary and is
     // moved straight into the response (no heap, no copies, nothing to leak).
     dataRender renderer(callback);
-    last = utility_t::prepare(renderer.render(path, render_sec), "text/html", headers);
+    last = utility_t::prepare(renderer.render(path, render_sec), vermell::mime::of(path), headers);
 }
 
 void Query::setHeaders(const string& _body) noexcept {

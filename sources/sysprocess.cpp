@@ -2,12 +2,12 @@
 // Created by owl on 30/07/24.
 //
 
-#include "../include/vibe/util/sysprocess.h"
+#include "../include/vermell/util/sysprocess.h"
 #include <algorithm>
 #include <iostream>
 #include <iterator>
 
-#include "../include/vibe/util/nterminal.h"
+#include "../include/vermell/util/nterminal.h"
 
 const char* const neosys::process::log_path = "log_cv.log";
 const std::string neosys::process::path = "PATH=$PATH:/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin";
@@ -71,22 +71,22 @@ int neosys::process::run_command(const std::vector<const char*> &args,
     int status;
 
     if (args.empty() || !static_cast<bool>(args[0])) {
-        return VB_NVALUE;
+        return VER_NVALUE;
     }
 
-    if (const pid_t pid = fork(); pid == VB_NVALUE) {
-        return VB_NVALUE;
+    if (const pid_t pid = fork(); pid == VER_NVALUE) {
+        return VER_NVALUE;
     } else if (pid != 0) {
         // ---- parent ----
         if (opts.timeout.count() <= 0) {
             // Legacy: block until the child finishes.
             pid_t retval;
-            while ((retval = waitpid(pid, &status, 0)) != VB_NVALUE) {
+            while ((retval = waitpid(pid, &status, 0)) != VER_NVALUE) {
                 if (retval == pid) break;
                 if (errno == EINTR) continue;
             }
-            if (retval == VB_NVALUE || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-                return VB_NVALUE;
+            if (retval == VER_NVALUE || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+                return VER_NVALUE;
             }
             return 0;
         }
@@ -96,20 +96,20 @@ int neosys::process::run_command(const std::vector<const char*> &args,
         for (;;) {
             const pid_t retval = waitpid(pid, &status, WNOHANG);
             if (retval == pid) {
-                return (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : VB_NVALUE;
+                return (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : VER_NVALUE;
             }
-            if (retval == VB_NVALUE) {
+            if (retval == VER_NVALUE) {
                 if (errno == EINTR)
                     continue;
-                return VB_NVALUE;
+                return VER_NVALUE;
             }
             if (std::chrono::steady_clock::now() >= deadline) {
                 if (opts.new_session)
                     kill(-pid, SIGKILL); // the whole group first
                 kill(pid, SIGKILL);      // fallback if setsid() failed
-                while (waitpid(pid, &status, 0) == VB_NVALUE && errno == EINTR)
+                while (waitpid(pid, &status, 0) == VER_NVALUE && errno == EINTR)
                     ;
-                return VB_NVALUE;
+                return VER_NVALUE;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
@@ -130,22 +130,22 @@ int neosys::process::run_command(const std::vector<const char*> &args,
         argv[args.size()] = nullptr;
 
         const int fd = open(_path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0600);
-        if (fd == VB_NVALUE) {
+        if (fd == VER_NVALUE) {
             _Exit(127);
         }
 
-        if(dup2(fd, STDOUT_FILENO) == VB_NVALUE) {
+        if(dup2(fd, STDOUT_FILENO) == VER_NVALUE) {
             close(fd);
             _Exit(127);
         }
-        if(dup2(fd, STDERR_FILENO) == VB_NVALUE) {
+        if(dup2(fd, STDERR_FILENO) == VER_NVALUE) {
             close(fd);
             _Exit(127);
         }
         close(fd);
 
         const std::array<const char*, 2> export_path = {path.c_str(), nullptr};
-        if (execve(argv[0], argv.data(), const_cast<char* const*>(export_path.data())) == VB_NVALUE) {
+        if (execve(argv[0], argv.data(), const_cast<char* const*>(export_path.data())) == VER_NVALUE) {
             _Exit(127);
         }
     }
@@ -178,9 +178,9 @@ std::string neosys::process::readFile(const std::string &path, char separator) {
 int neosys::process::writeFile(const std::string &path, const std::string &content) {
     std::ofstream write_stream(path, std::ios::binary);
     if (!write_stream.is_open())
-        return VB_NVALUE;
+        return VER_NVALUE;
 
     write_stream.write(content.data(), static_cast<std::streamsize>(content.size()));
     write_stream.close();
-    return write_stream.good() ? VB_OK : VB_NVALUE;
+    return write_stream.good() ? VER_OK : VER_NVALUE;
 }

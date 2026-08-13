@@ -1,0 +1,584 @@
+//
+// Modern HTTP/1.1 request parsing (C++20): zero-copy scanning with
+// std::string_view, percent-decoding, query/form parsing and
+// multipart/form-data (file upload) support.
+//
+
+#ifndef VERMELL_HTTP_MESSAGE_HPP
+#define VERMELL_HTTP_MESSAGE_HPP
+
+#include <algorithm>
+#include <charconv>
+#include <cctype>
+#include <fstream>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace vermell::http {
+
+    inline constexpr std::string_view TYPE_FORM_URLENCODED = "application/x-www-form-urlencoded";
+    inline constexpr std::string_view TYPE_JSON            = "application/json";
+    inline constexpr std::string_view TYPE_MULTIPART       = "multipart/form-data";
+    inline constexpr std::string_view TYPE_TEXT            = "text/plain";
+
+    // An uploaded file extracted from a multipart/form-data body.
+    struct UploadedFile {
+        std::string field;        // form field name (Content-Disposition name="...")
+        std::string filename;     // original file name sent by the client
+        std::string mime;         // part Content-Type (application/octet-stream by default)
+        std::string content;      // raw bytes
+
+        [[nodiscard]] size_t size()  const noexcept { return content.size(); }
+        [[nodiscard]] bool   empty() const noexcept { return content.empty(); }
+
+        bool save_to(const std::string& path) const {
+            std::ofstream out(path, std::ios::binary | std::ios::trunc);
+            if (!out.is_open())
+                return false;
+            out.write(content.data(), static_cast<std::streamsize>(content.size()));
+            return out.good();
+        }
+    };
+
+    namespace detail {
+
+        [[nodiscard]] inline char ascii_lower(const char c) noexcept {
+            return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+
+        [[nodiscard]] inline bool iequals(const std::string_view a, const std::string_view b) noexcept {
+            return a.size() == b.size()
+                && std::equal(a.begin(), a.end(), b.begin(), [](const char x, const char y) {
+                       return ascii_lower(x) == ascii_lower(y);
+                   });
+        }
+
+        [[nodiscard]] inline std::string_view trim(const std::string_view sv) noexcept {
+            constexpr std::string_view WS = " \t\r\n";
+            const size_t first = sv.find_first_not_of(WS);
+            if (first == std::string_view::npos)
+                return {};
+            return sv.substr(first, sv.find_last_not_of(WS) - first + 1);
+        }
+
+        [[nodiscard]] inline std::string lower(const std::string_view sv) {
+            std::string out;
+            out.reserve(sv.size());
+            for (const char c : sv)
+                out.push_back(ascii_lower(c));
+            return out;
+        }
+
+        [[nodiscard]] inline int hex_value(const char c) noexcept {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
+        }
+
+    } // namespace detail
+
+    // Decodes application/x-www-form-urlencoded escapes: %XX and '+'.
+    [[nodiscard]] inline std::string url_decode(const std::string_view in) {
+        std::string out;
+        out.reserve(in.size());
+
+        for (size_t i = 0; i < in.size(); ++i) {
+            const char c = in[i];
+            if (c == '%' && i + 2 < in.size() + 1 && i + 2 <= in.size() - 1) {
+                const int hi = detail::hex_value(in[i + 1]);
+                const int lo = detail::hex_value(in[i + 2]);
+                if (hi >= 0 && lo >= 0) {
+                    out.push_back(static_cast<char>((hi << 4) | lo));
+                    i += 2;
+                    continue;
+                }
+                out.push_back(c); // malformed escape: keep literally
+            }
+            else if (c == '+') {
+                out.push_back(' ');
+            }
+            else {
+                out.push_back(c);
+            }
+        }
+        return out;
+    }
+
+    // Parses "a=1&b=two" (query strings and urlencoded bodies) with decoding.
+    [[nodiscard]] inline std::vector<std::pair<std::string, std::string>>
+    parse_query(const std::string_view raw) {
+        std::vector<std::pair<std::string, std::string>> out;
+
+        size_t pos = 0;
+        while (pos <= raw.size()) {
+            const size_t amp = raw.find('&', pos);
+            const std::string_view segment = raw.substr(pos, amp == std::string_view::npos ? amp : amp - pos);
+
+            if (!segment.empty()) {
+                if (const size_t eq = segment.find('='); eq != std::string_view::npos)
+                    out.emplace_back(url_decode(segment.substr(0, eq)), url_decode(segment.substr(eq + 1)));
+                else
+                    out.emplace_back(url_decode(segment), std::string{});
+            }
+
+            if (amp == std::string_view::npos)
+                break;
+            pos = amp + 1;
+        }
+        return out;
+    }
+
+    // A fully parsed HTTP/1.1 request message.
+    //
+    // Hardening rules (RFC 9112):
+    //   - request line is strictly METHOD SP TARGET SP HTTP/DIGIT.DIGIT
+    //   - a request without Content-Length has NO body: extra bytes after
+    //     the head are ignored (no pipelining: the connection is closed)
+    //   - the body is exactly Content-Length bytes; less is an error
+    //   - duplicated Content-Length is accepted only when every value
+    //     matches; conflicting or non-numeric values are rejected (400)
+    //   - Transfer-Encoding is not implemented: rejected with 501 instead
+    //     of being silently mis-parsed
+    //   - at most MAX_HEADERS header fields (431)
+    class Message {
+    public:
+        // Hard cap on header fields: far beyond any browser or API client,
+        // and a wall against header-flood abuse.
+        static constexpr size_t MAX_HEADERS = 100;
+
+        std::string method;        // GET, POST, ...
+        std::string target;        // raw request target, e.g. /index?id=2
+        std::string path;          // target without query string or trailing '/'
+        std::string query;         // raw query string (still percent-encoded)
+        std::string version;       // e.g. HTTP/1.1
+        std::string body;          // message body (exactly Content-Length bytes)
+
+        // Header list preserving wire order and original name casing.
+        std::vector<std::pair<std::string, std::string>> headers;
+
+        [[nodiscard]] std::string_view header(const std::string_view name) const noexcept {
+            for (const auto& [hname, hvalue] : headers)
+                if (detail::iequals(hname, name))
+                    return hvalue;
+            return {};
+        }
+
+        [[nodiscard]] bool has_header(const std::string_view name) const noexcept {
+            return std::any_of(headers.begin(), headers.end(), [&](const auto& h) {
+                return detail::iequals(h.first, name);
+            });
+        }
+
+        // Lowercased media type without parameters: "text/html; charset=x" -> "text/html".
+        [[nodiscard]] std::string_view content_type() const noexcept { return content_type_; }
+
+        // Value of a Content-Type parameter, e.g. content_type_param("boundary").
+        [[nodiscard]] std::optional<std::string_view> content_type_param(const std::string_view key) const noexcept {
+            for (const auto& [k, v] : content_type_params_)
+                if (k == key)
+                    return v;
+            return std::nullopt;
+        }
+
+        // Validated Content-Length (0 when absent). Consistent by
+        // construction: parse() rejects anything ambiguous.
+        [[nodiscard]] size_t content_length() const noexcept { return content_length_; }
+
+        // ---- framing inspection -------------------------------------------
+
+        // How a raw (possibly partial) request buffer is framed.
+        enum class Framing {
+            Complete,       // ready for parse()
+            Incomplete,     // keep reading from the socket
+            BadRequest,     // 400: invalid or conflicting Content-Length
+            TooManyHeaders, // 431: more than MAX_HEADERS header fields
+            NotImplemented  // 501: Transfer-Encoding is not supported
+        };
+
+        struct Inspection {
+            Framing framing = Framing::Incomplete;
+            // Total request bytes once the head is known (head + declared
+            // body). 0 while the head has not fully arrived.
+            size_t  expected = 0;
+        };
+
+        // Inspects raw bytes WITHOUT building a Message. This is the single
+        // source of truth for "is the request complete?" shared by the
+        // socket read loop and parse() itself.
+        [[nodiscard]] static Inspection inspect(const std::string_view raw) noexcept {
+            const auto [head_end, separator] = head_bounds(raw);
+
+            if (head_end == std::string_view::npos) {
+                // Head still on the wire, but a flood of lines is already
+                // answer enough: reject without waiting for the terminator.
+                size_t lines = 0;
+                for (size_t p = raw.find('\n'); p != std::string_view::npos; p = raw.find('\n', p + 1))
+                    if (++lines > MAX_HEADERS + 1) // +1: the request line
+                        return {Framing::TooManyHeaders, 0};
+                return {Framing::Incomplete, 0};
+            }
+
+            const HeadScan scan = scan_head(raw.substr(0, head_end));
+            if (scan.too_many)
+                return {Framing::TooManyHeaders, 0};
+            if (scan.bad)
+                return {Framing::BadRequest, 0};
+            if (scan.transfer_encoding)
+                return {Framing::NotImplemented, 0};
+
+            const size_t base = head_end + separator;
+            size_t total = base;
+            if (scan.content_length > std::string_view::npos - base)
+                total = std::string_view::npos; // saturated: the caller's size cap rejects it
+            else
+                total = base + scan.content_length;
+
+            return {raw.size() >= total ? Framing::Complete : Framing::Incomplete, total};
+        }
+
+        // ---- parsing --------------------------------------------------------
+
+        // Parses a COMPLETE request (see inspect()). Malformed input yields
+        // nullopt; the transport layer answers 400/431/501 as appropriate.
+        [[nodiscard]] static std::optional<Message> parse(const std::string_view raw) {
+            const auto [head_end, separator] = head_bounds(raw);
+            if (head_end == std::string_view::npos)
+                return std::nullopt; // incomplete head: nothing trustworthy to parse
+
+            const std::string_view head = raw.substr(0, head_end);
+            const HeadScan scan = scan_head(head);
+            if (scan.bad || scan.transfer_encoding || scan.too_many)
+                return std::nullopt; // inspect() already pinpointed the reason
+
+            Message msg;
+
+            // ---- request line: METHOD SP TARGET SP HTTP/DIGIT.DIGIT ----
+            const size_t line_end = head.find('\n');
+            const std::string_view request_line = head.substr(0, line_end);
+
+            const size_t sp1 = request_line.find(' ');
+            if (sp1 == std::string_view::npos || sp1 == 0)
+                return std::nullopt;
+            const size_t sp2 = request_line.find(' ', sp1 + 1);
+            if (sp2 == std::string_view::npos || sp2 == sp1 + 1)
+                return std::nullopt; // empty target or missing version
+            if (request_line.find(' ', sp2 + 1) != std::string_view::npos)
+                return std::nullopt; // exactly three parts, no more
+
+            const std::string_view method_view = request_line.substr(0, sp1);
+            const std::string_view target_view = request_line.substr(sp1 + 1, sp2 - sp1 - 1);
+            std::string_view version_view = request_line.substr(sp2 + 1);
+            if (!version_view.empty() && version_view.back() == '\r')
+                version_view.remove_suffix(1);
+
+            if (!is_token(method_view) || !is_valid_target(target_view) || !is_valid_version(version_view))
+                return std::nullopt;
+
+            msg.method  = std::string(method_view);
+            msg.target  = std::string(target_view);
+            msg.version = std::string(version_view);
+
+            // path / query split; strip a single trailing '/' like the legacy router did
+            if (const size_t q = msg.target.find('?'); q != std::string::npos) {
+                msg.path  = msg.target.substr(0, q);
+                msg.query = msg.target.substr(q + 1);
+            } else {
+                msg.path = msg.target;
+            }
+            if (msg.path.size() > 1 && msg.path.back() == '/')
+                msg.path.pop_back();
+
+            // ---- header block (the head is already validated by scan_head) ----
+            if (line_end != std::string_view::npos) {
+                size_t pos = line_end + 1;
+                while (pos < head.size()) {
+                    const size_t eol = head.find('\n', pos);
+                    std::string_view line = head.substr(pos, eol == std::string_view::npos ? eol : eol - pos);
+                    pos = eol == std::string_view::npos ? head.size() : eol + 1;
+
+                    if (!line.empty() && line.back() == '\r')
+                        line.remove_suffix(1);
+                    if (line.empty())
+                        continue;
+
+                    const size_t colon = line.find(':');
+                    if (colon == std::string_view::npos || colon == 0)
+                        return std::nullopt; // malformed field line
+
+                    const std::string_view name = detail::trim(line.substr(0, colon));
+                    if (!is_token(name))
+                        return std::nullopt; // spaces/control chars in the name
+
+                    msg.headers.emplace_back(std::string(name),
+                                             std::string(detail::trim(line.substr(colon + 1))));
+                }
+            }
+
+            // ---- body: exactly Content-Length bytes, or none ----
+            msg.content_length_ = scan.content_length;
+            const size_t body_begin = head_end + separator;
+            if (scan.has_content_length && scan.content_length > 0) {
+                if (raw.size() - body_begin < scan.content_length)
+                    return std::nullopt; // promised bytes never arrived
+                msg.body = std::string(raw.substr(body_begin, scan.content_length));
+            }
+
+            msg.parse_content_type();
+            return msg;
+        }
+
+    private:
+        size_t content_length_ = 0;
+        // Owning member: a string_view pointing into a sibling string member
+        // would dangle when a Message is moved (SSO buffers are copied inline).
+        std::string content_type_;
+        std::vector<std::pair<std::string, std::string>> content_type_params_;
+
+        // Result of scanning the header block for framing purposes.
+        struct HeadScan {
+            size_t content_length     = 0;
+            bool   has_content_length = false;
+            bool   bad                = false; // CL non-numeric or conflicting duplicates
+            bool   transfer_encoding  = false; // any Transfer-Encoding header
+            bool   too_many           = false; // > MAX_HEADERS fields
+        };
+
+        // Returns {head_bytes, separator_size} for the head terminator
+        // ("\r\n\r\n", or bare "\n\n" for legacy clients), or {npos, 0}
+        // when the head has not fully arrived yet.
+        static std::pair<size_t, size_t> head_bounds(const std::string_view raw) noexcept {
+            const size_t crlf = raw.find("\r\n\r\n");
+            const size_t lf   = raw.find("\n\n");
+            if (crlf == std::string_view::npos)
+                return lf == std::string_view::npos ? std::pair{lf, size_t{0}} : std::pair{lf, size_t{2}};
+            if (lf == std::string_view::npos)
+                return {crlf, size_t{4}};
+            return lf < crlf ? std::pair{lf, size_t{2}} : std::pair{crlf, size_t{4}};
+        }
+
+        // Scans the header block line by line, validating only what framing
+        // needs: Content-Length and Transfer-Encoding. Zero allocations.
+        static HeadScan scan_head(const std::string_view head) noexcept {
+            HeadScan scan;
+
+            // Skip the request line.
+            size_t pos = head.find('\n');
+            if (pos == std::string_view::npos)
+                return scan;
+            ++pos;
+
+            size_t count = 0;
+            while (pos < head.size()) {
+                const size_t eol = head.find('\n', pos);
+                std::string_view line = head.substr(pos, eol == std::string_view::npos ? eol : eol - pos);
+                pos = eol == std::string_view::npos ? head.size() : eol + 1;
+
+                if (!line.empty() && line.back() == '\r')
+                    line.remove_suffix(1);
+                if (line.empty())
+                    continue;
+                if (++count > MAX_HEADERS) {
+                    scan.too_many = true;
+                    return scan;
+                }
+
+                const size_t colon = line.find(':');
+                if (colon == std::string_view::npos || colon == 0)
+                    continue; // malformed line: parse() rejects it; framing ignores it
+
+                const std::string_view name  = detail::trim(line.substr(0, colon));
+                const std::string_view value = detail::trim(line.substr(colon + 1));
+
+                if (detail::iequals(name, "content-length")) {
+                    size_t parsed = 0;
+                    const char* first = value.data();
+                    const char* last  = first + value.size();
+                    const auto [ptr, ec] = std::from_chars(first, last, parsed);
+                    // Whole value must be digits: no junk, no overflow.
+                    if (ec != std::errc{} || ptr != last) {
+                        scan.bad = true;
+                        return scan;
+                    }
+                    // Duplicates are legal only when every value matches
+                    // (RFC 9112 §6.3); a mismatch is a smuggling attempt.
+                    if (scan.has_content_length && scan.content_length != parsed) {
+                        scan.bad = true;
+                        return scan;
+                    }
+                    scan.has_content_length = true;
+                    scan.content_length     = parsed;
+                } else if (detail::iequals(name, "transfer-encoding")) {
+                    scan.transfer_encoding = true; // not supported: reject early
+                    return scan;
+                }
+            }
+            return scan;
+        }
+
+        // RFC 9110 tchar: method and header names are tokens.
+        static bool is_token(const std::string_view s) noexcept {
+            if (s.empty())
+                return false;
+            for (const char c : s) {
+                const auto u = static_cast<unsigned char>(c);
+                if (!(std::isalnum(u) || c == '!' || c == '#' || c == '$' || c == '%'
+                      || c == '&' || c == '\'' || c == '*' || c == '+' || c == '-'
+                      || c == '.' || c == '^' || c == '_' || c == '`' || c == '|' || c == '~'))
+                    return false;
+            }
+            return true;
+        }
+
+        // No spaces or control characters in the request target.
+        static bool is_valid_target(const std::string_view target) noexcept {
+            if (target.empty())
+                return false;
+            for (const char c : target)
+                if (const auto u = static_cast<unsigned char>(c); u <= 0x20 || u == 0x7f)
+                    return false;
+            return true;
+        }
+
+        static bool is_valid_version(const std::string_view v) noexcept {
+            return v.size() == 8 && v.starts_with("HTTP/")
+                && std::isdigit(static_cast<unsigned char>(v[5]))
+                && v[6] == '.'
+                && std::isdigit(static_cast<unsigned char>(v[7]));
+        }
+
+        void parse_content_type() {
+            const std::string_view value = header("Content-Type");
+            if (value.empty())
+                return;
+
+            const size_t semi = value.find(';');
+            content_type_ = detail::lower(detail::trim(value.substr(0, semi)));
+
+            // parse "; key=value" parameters (boundary, charset, ...)
+            size_t pos = semi == std::string_view::npos ? value.size() : semi + 1;
+            while (pos < value.size()) {
+                const size_t next = value.find(';', pos);
+                const std::string_view pair = value.substr(pos, next == std::string_view::npos ? next : next - pos);
+                if (const size_t eq = pair.find('='); eq != std::string_view::npos) {
+                    std::string_view val = detail::trim(pair.substr(eq + 1));
+                    if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
+                        val = val.substr(1, val.size() - 2);
+                    content_type_params_.emplace_back(detail::lower(detail::trim(pair.substr(0, eq))),
+                                                      std::string(val));
+                }
+                if (next == std::string_view::npos)
+                    break;
+                pos = next + 1;
+            }
+        }
+    };
+
+    // Result of parsing a multipart/form-data body.
+    struct Multipart {
+        std::vector<std::pair<std::string, std::string>> fields;
+        std::vector<UploadedFile> files;
+    };
+
+    namespace detail {
+
+        // Extracts a quoted token from a Content-Disposition header value:
+        // disposition_param(R"(form-data; name="doc"; filename="a.txt")", "name") -> "doc"
+        [[nodiscard]] inline std::string disposition_param(const std::string_view disposition,
+                                                           const std::string_view key) {
+            const std::string needle = std::string(key) + "=\"";
+            const size_t begin = disposition.find(needle);
+            if (begin == std::string_view::npos)
+                return {};
+            const size_t value_begin = begin + needle.size();
+            const size_t value_end = disposition.find('"', value_begin);
+            if (value_end == std::string_view::npos)
+                return {};
+            return std::string(disposition.substr(value_begin, value_end - value_begin));
+        }
+
+    } // namespace detail
+
+    // Splits a multipart/form-data body into plain fields and uploaded files.
+    [[nodiscard]] inline Multipart parse_multipart(const std::string_view body,
+                                                   const std::string_view boundary) {
+        Multipart result;
+        if (boundary.empty())
+            return result;
+
+        const std::string delimiter = "--" + std::string(boundary);
+        size_t pos = body.find(delimiter);
+        if (pos == std::string_view::npos)
+            return result;
+        pos += delimiter.size();
+
+        while (pos <= body.size()) {
+            // Final delimiter ("--boundary--") ends the message.
+            if (body.substr(pos, 2) == "--")
+                break;
+            if (body.substr(pos, 2) == "\r\n")
+                pos += 2;
+            else if (body.substr(pos, 1) == "\n")
+                pos += 1;
+
+            const size_t next = body.find(delimiter, pos);
+            if (next == std::string_view::npos)
+                break;
+
+            std::string_view part = body.substr(pos, next - pos);
+            pos = next + delimiter.size();
+
+            // Strip the CRLF that precedes the next delimiter.
+            if (part.size() >= 2 && part.substr(part.size() - 2) == "\r\n")
+                part.remove_suffix(2);
+            else if (!part.empty() && part.back() == '\n')
+                part.remove_suffix(1);
+
+            const size_t split = part.find("\r\n\r\n");
+            const std::string_view part_headers = split == std::string_view::npos ? part : part.substr(0, split);
+            const std::string_view content = split == std::string_view::npos
+                                                 ? std::string_view{}
+                                                 : part.substr(split + 4);
+
+            std::string disposition, part_mime;
+            size_t hpos = 0;
+            while (hpos <= part_headers.size()) {
+                const size_t eol = part_headers.find("\r\n", hpos);
+                const std::string_view line = part_headers.substr(hpos, eol == std::string_view::npos ? eol : eol - hpos);
+                if (const size_t colon = line.find(':'); colon != std::string_view::npos) {
+                    const std::string_view hname = detail::trim(line.substr(0, colon));
+                    const std::string_view hvalue = detail::trim(line.substr(colon + 1));
+                    if (detail::iequals(hname, "Content-Disposition"))
+                        disposition = std::string(hvalue);
+                    else if (detail::iequals(hname, "Content-Type"))
+                        part_mime = std::string(hvalue);
+                }
+                if (eol == std::string_view::npos)
+                    break;
+                hpos = eol + 2;
+            }
+
+            std::string name = detail::disposition_param(disposition, "name");
+            if (name.empty())
+                continue;
+
+            if (std::string filename = detail::disposition_param(disposition, "filename"); !filename.empty()) {
+                UploadedFile file;
+                file.field    = std::move(name);
+                file.filename = std::move(filename);
+                file.mime     = part_mime.empty() ? "application/octet-stream" : std::move(part_mime);
+                file.content  = std::string(content);
+                result.files.push_back(std::move(file));
+            } else {
+                result.fields.emplace_back(std::move(name), std::string(content));
+            }
+        }
+        return result;
+    }
+
+} // namespace vermell::http
+
+#endif // VERMELL_HTTP_MESSAGE_HPP

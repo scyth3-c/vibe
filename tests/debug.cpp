@@ -1,19 +1,16 @@
-#include <vibe/vibe.h>
+#include <vermell/vermell.h>
 
-using vibe::process;
-using std::string;
 
 int main() {
 
     Router router;
     router.setPort(8080);
 
-    router.get("/",{[&](Query &web) {
+    router.get("/",{[](Query &http) {
+                       http.readFileX(vermell::process.pwd + "/cpp.html");
+                   }
+               });
 
-        string ruta = process.pwd;
-        web.readFileX(ruta + "/cpp.html", "text/html");
-
-    }});
 
     router.listen();
 }

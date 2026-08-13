@@ -1,6 +1,6 @@
 #include "suite.h"
 
-#include "../include/vibe/util/secure_render.h"
+#include "../include/vermell/util/secure_render.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -263,10 +263,10 @@ TEST_F(TestSuite, TestQueryDecoding) {
        router.listenOne();
      )
 
-     const string res = http->get("/?name=hello%20world+vibe");
+     const string res = http->get("/?name=hello%20world+vermell");
      isolate_method.get();
 
-     EXPECT_EQ(res, "hello world vibe");
+     EXPECT_EQ(res, "hello world vermell");
  }
 
 
@@ -330,47 +330,54 @@ TEST_F(TestSuite, TestMultipartForm) {
      )
 
      const string multipart_body =
-         "------vibeTestBoundary\r\n"
+         "------vermellTestBoundary\r\n"
          "Content-Disposition: form-data; name=\"title\"\r\n"
          "\r\n"
-         "hello vibe\r\n"
-         "------vibeTestBoundary\r\n"
+         "hello vermell\r\n"
+         "------vermellTestBoundary\r\n"
          "Content-Disposition: form-data; name=\"doc\"; filename=\"note.txt\"\r\n"
          "Content-Type: text/plain\r\n"
          "\r\n"
          "FILE-CONTENT-123\r\n"
-         "------vibeTestBoundary--\r\n";
+         "------vermellTestBoundary--\r\n";
 
      POST fields = { multipart_body };
-     VHeaders hdrs = { "Content-Type: multipart/form-data; boundary=----vibeTestBoundary" };
+     VHeaders hdrs = { "Content-Type: multipart/form-data; boundary=----vermellTestBoundary" };
 
      const string res = http->post(fields, hdrs, "/");
      isolate_method.get();
 
-     EXPECT_EQ(res, "hello vibe|note.txt|FILE-CONTENT-123");
+     EXPECT_EQ(res, "hello vermell|note.txt|FILE-CONTENT-123");
  }
 
 
 TEST_F(TestSuite, TestMimeTypes) {
-     EXPECT_EQ(vibe::mime::of("index.html"), "text/html");
-     EXPECT_EQ(vibe::mime::of("photo.JPG"), "image/jpeg");
-     EXPECT_EQ(vibe::mime::of("script.js"), "application/javascript");
-     EXPECT_EQ(vibe::mime::of("data.bin"), "application/octet-stream");
-     EXPECT_EQ(vibe::mime::of("no_extension"), "application/octet-stream");
+     EXPECT_EQ(vermell::mime::of("index.html"), "text/html");
+     EXPECT_EQ(vermell::mime::of("photo.JPG"), "image/jpeg");
+      EXPECT_EQ(vermell::mime::of("script.js"), "application/javascript");
+      EXPECT_EQ(vermell::mime::of("kevin.txt.html"), "text/html");
+      EXPECT_EQ(vermell::mime::of("PHOTO.JPEG?download=1"), "image/jpeg");
+      EXPECT_EQ(vermell::mime::of("feed.json#top"), "application/json");
+      EXPECT_EQ(vermell::mime::html, "text/html");
+      EXPECT_EQ(vermell::mime::json, "application/json");
+      EXPECT_EQ(vermell::mime::of("font.woff2"), "font/woff2");
+      EXPECT_EQ(vermell::mime::of("archive.tar.gz"), "application/gzip");
+      EXPECT_EQ(vermell::mime::of("data.bin"), "application/octet-stream");
+     EXPECT_EQ(vermell::mime::of("no_extension"), "application/octet-stream");
  }
 
 
 TEST_F(TestSuite, TestResponseBuilder) {
-     const string wire = vibe::http::Response{}
+     const string wire = vermell::http::Response{}
                              .status(404)
                              .type("text/plain")
-                             .set("X-App", "vibe")
+                             .set("X-App", "vermell")
                              .body("oops")
                              .str();
 
      EXPECT_NE(wire.find("HTTP/1.1 404 Not Found\r\n"), string::npos);
      EXPECT_NE(wire.find("Content-Type: text/plain\r\n"), string::npos);
-     EXPECT_NE(wire.find("X-App: vibe\r\n"), string::npos);
+     EXPECT_NE(wire.find("X-App: vermell\r\n"), string::npos);
      EXPECT_NE(wire.find("Content-Length: 4\r\n"), string::npos);
      EXPECT_TRUE(wire.ends_with("\r\n\r\noops"));
  }
@@ -473,33 +480,33 @@ TEST_F(TestSuite, TestConfigureKeepsFlow) {
 // ---------------------------------------------------------------------------
 
 TEST(SecureRenderUnit, Sha256KnownVector) {
-     EXPECT_EQ(vibe::srender::sha256_hex("abc"),
+     EXPECT_EQ(vermell::srender::sha256_hex("abc"),
                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
-     EXPECT_EQ(vibe::srender::sha256_hex(""),
+     EXPECT_EQ(vermell::srender::sha256_hex(""),
                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 }
 
 TEST(SecureRenderUnit, IncludeNameWhitelist) {
-     EXPECT_TRUE(vibe::srender::valid_include_name("one.html"));
-     EXPECT_TRUE(vibe::srender::valid_include_name("a-b_c.d"));
-     EXPECT_FALSE(vibe::srender::valid_include_name("../../etc/passwd"));
-     EXPECT_FALSE(vibe::srender::valid_include_name(".."));
-     EXPECT_FALSE(vibe::srender::valid_include_name("/etc/passwd"));
-     EXPECT_FALSE(vibe::srender::valid_include_name("a/b"));
-     EXPECT_FALSE(vibe::srender::valid_include_name(""));
-     EXPECT_FALSE(vibe::srender::valid_include_name(string("a\0b", 3)));
+     EXPECT_TRUE(vermell::srender::valid_include_name("one.html"));
+     EXPECT_TRUE(vermell::srender::valid_include_name("a-b_c.d"));
+     EXPECT_FALSE(vermell::srender::valid_include_name("../../etc/passwd"));
+     EXPECT_FALSE(vermell::srender::valid_include_name(".."));
+     EXPECT_FALSE(vermell::srender::valid_include_name("/etc/passwd"));
+     EXPECT_FALSE(vermell::srender::valid_include_name("a/b"));
+     EXPECT_FALSE(vermell::srender::valid_include_name(""));
+     EXPECT_FALSE(vermell::srender::valid_include_name(string("a\0b", 3)));
 }
 
 TEST(SecureRenderUnit, IsWithinJail) {
-     EXPECT_TRUE(vibe::srender::is_within(".", "./main_test.cpp"));
-     EXPECT_TRUE(vibe::srender::is_within(".", "main_test.cpp"));
-     EXPECT_FALSE(vibe::srender::is_within(".", "/etc/passwd"));
-     EXPECT_FALSE(vibe::srender::is_within(".", "../../../../etc/passwd"));
-     EXPECT_FALSE(vibe::srender::is_within(".", "../vibe/README.md"));
+     EXPECT_TRUE(vermell::srender::is_within(".", "./main_test.cpp"));
+     EXPECT_TRUE(vermell::srender::is_within(".", "main_test.cpp"));
+     EXPECT_FALSE(vermell::srender::is_within(".", "/etc/passwd"));
+     EXPECT_FALSE(vermell::srender::is_within(".", "../../../../etc/passwd"));
+     EXPECT_FALSE(vermell::srender::is_within(".", "../vermell/README.md"));
 }
 
 TEST(SecureRenderUnit, ResponseHeaderInjectionStripped) {
-     const string wire = vibe::http::Response{}
+     const string wire = vermell::http::Response{}
                              .set("X-Safe", "ok\r\nX-Injected: evil")
                              .set("X-Weird\r\nName", "v")
                              .str();
@@ -518,7 +525,7 @@ TEST(SecureRenderUnit, BasicReadRejectsNonRegularFiles) {
 }
 
 TEST(SecureRenderUnit, BasicReadJailBlocksEscape) {
-     vibe::RenderSecurity sec;
+     vermell::RenderSecurity sec;
      sec.root = "."; // jail to the CWD
      auto [data, status] = BasicRead::processing("/etc/passwd", sec);
      EXPECT_EQ(status, "403");
@@ -552,7 +559,7 @@ TEST(SecureRenderUnit, ComposeRejectsTraversalModule) {
      const string file = "./sec_trav.html";
      { std::ofstream out(file); out << "A#[../../../etc/passwd];B"; }
 
-     auto [data, status] = MgReader::processing(file, 1);
+     auto [data, status] = VerReader::processing(file, 1);
      EXPECT_EQ(status, "403");
      EXPECT_EQ(data.find("root:"), string::npos);
      std::filesystem::remove(file);
@@ -564,7 +571,7 @@ TEST(SecureRenderUnit, ComposeWithoutTagsIsUnchanged) {
      const string file = "./sec_plain.html";
      { std::ofstream out(file); out << "<h1>no modules</h1>"; }
 
-     auto [data, status] = MgReader::processing(file, 2);
+     auto [data, status] = VerReader::processing(file, 2);
      EXPECT_EQ(status, "200");
      EXPECT_EQ(data, "<h1>no modules</h1>");
      std::filesystem::remove(file);
@@ -702,6 +709,123 @@ TEST_F(TestSuite, TestReadFileXCacheKeepsOutput) {
      second.get();
      EXPECT_EQ(res, res2);
 
+      std::filesystem::remove(file);
+  }
+
+TEST_F(TestSuite, TestReadFileXMultipleBlocks) {
+
+     // Text before, between and after the blocks must survive byte-exact and
+     // each block's stdout must land at its position in the page.
+     const string file = "./sec_multi.html";
+     { std::ofstream out(file); out << "A$ std::cout << \"1\"; $B$\n std::cout << \"2\";\n$C"; }
+
+     Router router;
+     router.setPort(8108);
+     router.get("/", {[&](Query &http) {
+                http.readFileX(file); // also exercises MIME auto-detection
+       }});
+
+     ISOLATE(
+          router.listenOne();
+     )
+
+     Veridic client("http://localhost:8108");
+     const string res = client.get();
+     isolate_method.get();
+
+     EXPECT_EQ(res, "A1B2C");
+
+     std::filesystem::remove(file);
+ }
+
+TEST_F(TestSuite, TestReadFileXForLoopAndSecondBlock) {
+
+     // The exact shape from the docs: a loop block, then another block.
+     const string file = "./sec_buttons.html";
+     { std::ofstream out(file); out <<
+         "$\n"
+         "    for (int i = 0; i < 10; i++) {\n"
+         "        std::cout << \"<button> soy un boton, numero: \" << i << \"</button>\";\n"
+         "    }\n"
+         "$\n"
+         "\n"
+         "$\n"
+         "    std::cout << \"<button>test</button>\";\n"
+         "$\n";
+     }
+
+     Router router;
+     router.setPort(8109);
+     router.get("/", {[&](Query &http) {
+                http.readFileX(file, "text/html");
+       }});
+
+     ISOLATE(
+          router.listenOne();
+     )
+
+     Veridic client("http://localhost:8109");
+     const string res = client.get();
+     isolate_method.get();
+
+     for (int i = 0; i < 10; i++)
+         EXPECT_NE(res.find("<button> soy un boton, numero: " + std::to_string(i) + "</button>"),
+                   string::npos);
+     EXPECT_NE(res.find("<button>test</button>"), string::npos);
+
+     std::filesystem::remove(file);
+ }
+
+TEST_F(TestSuite, TestReadFileXDanglingDollarIsVerbatim) {
+
+     // A '$' without a closing partner is literal text, not a broken
+     // template (prices, shell snippets, truncated files).
+     const string file = "./sec_dollar.html";
+     { std::ofstream out(file); out << "<p>price: $5 and \"quotes\" \\ backslash</p>"; }
+
+     Router router;
+     router.setPort(8110);
+     router.get("/", {[&](Query &http) {
+                http.readFileX(file, "text/html");
+       }});
+
+     ISOLATE(
+          router.listenOne();
+     )
+
+     Veridic client("http://localhost:8110");
+     const string res = client.get();
+     isolate_method.get();
+
+     EXPECT_EQ(res, "<p>price: $5 and \"quotes\" \\ backslash</p>");
+
+     std::filesystem::remove(file);
+ }
+
+TEST_F(TestSuite, TestReadFileXEscapesMarkupIntoSource) {
+
+     // Markup full of C++-hostile bytes (quotes, backslashes, newlines)
+     // around a live block: the generated translation unit must still
+     // compile and the text must round-trip byte-exact.
+     const string file = "./sec_escape.html";
+     { std::ofstream out(file); out << "<a title=\"x\\y\">\"q\"</a>\n$ std::cout << \"<b>ok</b>\"; $\n<div>\\done\\</div>"; }
+
+     Router router;
+     router.setPort(8111);
+     router.get("/", {[&](Query &http) {
+                http.readFileX(file, "text/html");
+       }});
+
+     ISOLATE(
+          router.listenOne();
+     )
+
+     Veridic client("http://localhost:8111");
+     const string res = client.get();
+     isolate_method.get();
+
+     EXPECT_EQ(res, "<a title=\"x\\y\">\"q\"</a>\n<b>ok</b>\n<div>\\done\\</div>");
+
      std::filesystem::remove(file);
  }
 
@@ -774,44 +898,44 @@ TEST_F(TestSuite, TestComposeTraversalOverHttp) {
 
 
 // ---------------------------------------------------------------------------
-// JSON DOM (vibe::Json)
+// JSON DOM (vermell::Json)
 // ---------------------------------------------------------------------------
 
 TEST(JsonUnit, SerializesNativeTypesInOrder) {
-     const auto dev = vibe::Json::object({
-         {"name",   "vibe"},
+     const auto dev = vermell::Json::object({
+         {"name",   "vermell"},
          {"level",  20},
          {"pi",     3.5},
          {"active", true},
          {"cache",  nullptr},
-         {"tags",   vibe::Json::array({"web", "http"})},
-         {"nested", vibe::Json::object({{"x", 1}})},
+         {"tags",   vermell::Json::array({"web", "http"})},
+         {"nested", vermell::Json::object({{"x", 1}})},
      });
      EXPECT_EQ(dev.dump(),
-         R"({"name":"vibe","level":20,"pi":3.5,"active":true,"cache":null,"tags":["web","http"],"nested":{"x":1}})");
+         R"({"name":"vermell","level":20,"pi":3.5,"active":true,"cache":null,"tags":["web","http"],"nested":{"x":1}})");
 }
 
 TEST(JsonUnit, SerializesEmptyContainersAndInt64) {
-     EXPECT_EQ(vibe::Json::array({}).dump(), "[]");
-     EXPECT_EQ(vibe::Json::object({}).dump(), "{}");
-     EXPECT_EQ(vibe::Json(nullptr).dump(), "null");
-     EXPECT_EQ(vibe::Json(INT64_MAX).dump(), "9223372036854775807");
+     EXPECT_EQ(vermell::Json::array({}).dump(), "[]");
+     EXPECT_EQ(vermell::Json::object({}).dump(), "{}");
+     EXPECT_EQ(vermell::Json(nullptr).dump(), "null");
+     EXPECT_EQ(vermell::Json(INT64_MAX).dump(), "9223372036854775807");
 
      // numbers too big for int64 degrade to double on parse
-     const auto big = vibe::Json::parse("9223372036854775808");
+     const auto big = vermell::Json::parse("9223372036854775808");
      ASSERT_TRUE(big.has_value());
      EXPECT_TRUE(big->is_double());
 }
 
 TEST(JsonUnit, EscapesStrings) {
-     EXPECT_EQ(vibe::Json("a\"b\\c").dump(), R"("a\"b\\c")");
-     EXPECT_EQ(vibe::Json("line\nnext\ttab").dump(), R"("line\nnext\ttab")");
+     EXPECT_EQ(vermell::Json("a\"b\\c").dump(), R"("a\"b\\c")");
+     EXPECT_EQ(vermell::Json("line\nnext\ttab").dump(), R"("line\nnext\ttab")");
      // remaining control chars become \u00XX
-     EXPECT_EQ(vibe::Json(string("x\1y", 3)).dump(), "\"x\\u0001y\"");
+     EXPECT_EQ(vermell::Json(string("x\1y", 3)).dump(), "\"x\\u0001y\"");
 }
 
 TEST(JsonUnit, TypedAccessAndLookup) {
-     const auto j = vibe::Json::parse(R"({"name":"vibe","level":20,"tags":["a","b"],"pi":3.5})");
+     const auto j = vermell::Json::parse(R"({"name":"vermell","level":20,"tags":["a","b"],"pi":3.5})");
      ASSERT_TRUE(j.has_value());
      EXPECT_TRUE(j->is_object());
      EXPECT_EQ(j->size(), 4UL);
@@ -823,7 +947,7 @@ TEST(JsonUnit, TypedAccessAndLookup) {
      EXPECT_EQ(level->as_double(), 20.0);
 
      EXPECT_EQ(j->at("missing"), nullptr);
-     EXPECT_EQ(std::string(j->at("name")->as_string()), "vibe");
+     EXPECT_EQ(std::string(j->at("name")->as_string()), "vermell");
 
      const auto* tags = j->at("tags");
      ASSERT_TRUE(tags != nullptr && tags->is_array());
@@ -838,38 +962,38 @@ TEST(JsonUnit, TypedAccessAndLookup) {
 
 TEST(JsonUnit, RoundTripIsStable) {
      const string src = R"({"a":[1,2.5,"x",null,true],"b":{"c":-3},"u":"éè"})";
-     const auto first = vibe::Json::parse(src);
+     const auto first = vermell::Json::parse(src);
      ASSERT_TRUE(first.has_value());
-     const auto second = vibe::Json::parse(first->dump());
+     const auto second = vermell::Json::parse(first->dump());
      ASSERT_TRUE(second.has_value());
      EXPECT_EQ(first->dump(), second->dump());
 }
 
 TEST(JsonUnit, UnicodeEscapesToUtf8) {
-     const auto j = vibe::Json::parse(R"("é€\uD83D\uDE00")");
+     const auto j = vermell::Json::parse(R"("é€\uD83D\uDE00")");
      ASSERT_TRUE(j.has_value());
      EXPECT_EQ(std::string(j->as_string()), "é€😀");
 }
 
 TEST(JsonUnit, RejectsInvalidJson) {
-     EXPECT_FALSE(vibe::Json::parse("").has_value());
-     EXPECT_FALSE(vibe::Json::parse("{").has_value());
-     EXPECT_FALSE(vibe::Json::parse("[1,]").has_value());
-     EXPECT_FALSE(vibe::Json::parse("{\"a\":01}").has_value());  // leading zero
-     EXPECT_FALSE(vibe::Json::parse("{\"a\" 1}").has_value());   // missing colon
-     EXPECT_FALSE(vibe::Json::parse("\"unterminated").has_value());
-     EXPECT_FALSE(vibe::Json::parse("\"bad\\xescape\"").has_value());
-     EXPECT_FALSE(vibe::Json::parse("\"\\uD800\"").has_value()); // lone surrogate
-     EXPECT_FALSE(vibe::Json::parse("true extra").has_value());  // trailing garbage
-     EXPECT_FALSE(vibe::Json::parse("01").has_value());
+     EXPECT_FALSE(vermell::Json::parse("").has_value());
+     EXPECT_FALSE(vermell::Json::parse("{").has_value());
+     EXPECT_FALSE(vermell::Json::parse("[1,]").has_value());
+     EXPECT_FALSE(vermell::Json::parse("{\"a\":01}").has_value());  // leading zero
+     EXPECT_FALSE(vermell::Json::parse("{\"a\" 1}").has_value());   // missing colon
+     EXPECT_FALSE(vermell::Json::parse("\"unterminated").has_value());
+     EXPECT_FALSE(vermell::Json::parse("\"bad\\xescape\"").has_value());
+     EXPECT_FALSE(vermell::Json::parse("\"\\uD800\"").has_value()); // lone surrogate
+     EXPECT_FALSE(vermell::Json::parse("true extra").has_value());  // trailing garbage
+     EXPECT_FALSE(vermell::Json::parse("01").has_value());
 
      // recursion bomb: beyond the depth cap
      const string bomb = string(300, '[') + string(300, ']');
-     EXPECT_FALSE(vibe::Json::parse(bomb).has_value());
+     EXPECT_FALSE(vermell::Json::parse(bomb).has_value());
 
      // ...but a deep-yet-reasonable tree parses fine
      const string deep = string(200, '[') + string(200, ']');
-     EXPECT_TRUE(vibe::Json::parse(deep).has_value());
+     EXPECT_TRUE(vermell::Json::parse(deep).has_value());
 }
 
 TEST(JsonUnit, LegacyJsonSIsSafeNow) {
@@ -879,7 +1003,7 @@ TEST(JsonUnit, LegacyJsonSIsSafeNow) {
      EXPECT_EQ(legacy(), R"({"id":"01","level":20,"odd":null})");
 
      // real nesting through the implicit conversion
-     const JSON_s nested = { "user", vibe::Json::object({{"name", "kevin"}}) };
+     const JSON_s nested = { "user", vermell::Json::object({{"name", "kevin"}}) };
      EXPECT_EQ(nested(), R"({"user":{"name":"kevin"}})");
 
      // braces inside strings are just data now, not corruption targets
@@ -894,12 +1018,12 @@ TEST(JsonUnit, LegacyJsonSIsSafeNow) {
       router.setPort(8099);
 
       router.post("/", {[&](Query &http) {
-         const auto body = vibe::Json::parse(http.body.raw());
+         const auto body = vermell::Json::parse(http.body.raw());
          if (!body.has_value())
              return http.json(R"({"error":"invalid json"})", 400);
 
          const auto* a = body->at("a");
-         http.json(vibe::Json::object({
+         http.json(vermell::Json::object({
              {"double", a != nullptr ? a->as_double() * 2 : 0.0},
          }).dump());
         }});
@@ -928,7 +1052,7 @@ TEST(CppToolchainUnit, StandardIsConfigurable) {
      const string file = "./tc_std.html";
      { std::ofstream out(file); out << "X$ auto f = [](auto x) requires true { return x * 2; }; std::cout << f(21); $Y"; }
 
-     vibe::RenderSecurity sec; // legacy default: c++17
+     vermell::RenderSecurity sec; // legacy default: c++17
      auto [body17, status17] = CppReader::processing(file, sec);
      EXPECT_EQ(status17, "400");
 
@@ -944,7 +1068,7 @@ TEST(CppToolchainUnit, ExtraFlagsReachTheCompiler) {
      const string file = "./tc_flags.html";
      { std::ofstream out(file); out << "A$ std::cout << ANSWER; $B"; } // ANSWER undefined by default
 
-     vibe::RenderSecurity sec;
+     vermell::RenderSecurity sec;
      sec.cpp.compiler = "g++"; // bare names are resolved in the usual dirs
      auto [plain, status_plain] = CppReader::processing(file, sec);
      EXPECT_EQ(status_plain, "400");
@@ -963,7 +1087,7 @@ TEST(CppToolchainUnit, CacheSeparatesToolchains) {
      const string file = "./tc_cache.html";
      { std::ofstream out(file); out << "A$ std::cout << ANSWER; $B"; }
 
-     vibe::RenderSecurity sec;
+     vermell::RenderSecurity sec;
      sec.cpp.flags = {"-DANSWER=1"};
      auto [one, status_one] = CppReader::processing(file, sec);
      EXPECT_EQ(status_one, "200");
@@ -981,7 +1105,7 @@ TEST(CppToolchainUnit, BadCompilerPathFailsCleanly) {
      const string file = "./tc_bad.html";
      { std::ofstream out(file); out << "A$ std::cout << 1; $B"; }
 
-     vibe::RenderSecurity sec;
+     vermell::RenderSecurity sec;
      sec.cpp.compiler = "/no/such/g++";
      auto [body, status] = CppReader::processing(file, sec);
      EXPECT_EQ(status, "400");
@@ -992,11 +1116,11 @@ TEST(CppToolchainUnit, BadCompilerPathFailsCleanly) {
 
 
 // ---------------------------------------------------------------------------
-// HTTP parser hardening (vibe::http::Message::inspect / parse)
+// HTTP parser hardening (vermell::http::Message::inspect / parse)
 // ---------------------------------------------------------------------------
 
-using Msg     = vibe::http::Message;
-using Framing = vibe::http::Message::Framing;
+using Msg     = vermell::http::Message;
+using Framing = vermell::http::Message::Framing;
 
 TEST(ParserHardeningUnit, InspectCompleteWithoutBody) {
      const string wire = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";

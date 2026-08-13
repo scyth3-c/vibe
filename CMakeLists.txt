@@ -1,7 +1,7 @@
 # CMakeList.txt
 
 cmake_minimum_required(VERSION 3.14)
-project(vibe)
+project(vermell)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,9 +18,10 @@ file(GLOB_RECURSE SOURCES
 )
 
 file(GLOB_RECURSE HEADERS
-        "${CMAKE_SOURCE_DIR}/include/vibe/*.h"
+        "${CMAKE_SOURCE_DIR}/include/vermell/*.h"
 )
-add_library(vibe STATIC ${SOURCES} ${HEADERS})
+add_library(vermell STATIC ${SOURCES} ${HEADERS})
+target_include_directories(vermell PUBLIC "${CMAKE_SOURCE_DIR}/include")
 
 option(TESTING "Enable testing" OFF)
 if (TESTING)
@@ -29,7 +30,7 @@ if (TESTING)
     add_executable(main tests/main_test.cpp)
     target_link_libraries(
             main
-            vibe
+            vermell
     )
 
     include(FetchContent)
@@ -75,15 +76,15 @@ if (TESTING)
 
 else ()
 
-    add_executable(vibex tests/debug.cpp)
-    target_link_libraries(vibex vibe)
+    add_executable(vermellx tests/debug.cpp)
+    target_link_libraries(vermellx vermell)
 
 endif ()
 
-install(TARGETS vibe
+install(TARGETS vermell
         ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib
         RUNTIME DESTINATION bin
 )
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/include/vibe" DESTINATION include)
-install(FILES "${CMAKE_SOURCE_DIR}/README.md" DESTINATION share/doc/vibe)
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/include/vermell" DESTINATION include)
+install(FILES "${CMAKE_SOURCE_DIR}/README.md" DESTINATION share/doc/vermell)

@@ -1,7 +1,7 @@
-#include <vibe/vibe.h>
+#include <vermell/vermell.h>
 
 //
-// vibe::Json: a real JSON tree (DOM) — native types, arrays, proper
+// vermell::Json: a real JSON tree (DOM) — native types, arrays, proper
 // nesting and correct string escaping, with a strict parser included.
 //
 //   curl http://localhost:8080/
@@ -15,14 +15,14 @@ int main() {
 
     router.get("/",{[](Query &web) {
 
-        const auto dev = vibe::Json::object({
+        const auto dev = vermell::Json::object({
             {"target", "123"},
             {"lang",   "c++"},
             {"level",  20},          // numbers stay numbers
             {"active", true},        // booleans stay booleans
             {"cache",  nullptr},     // null
-            {"tags",   vibe::Json::array({"web", "http", "linux"})},
-            {"dev", vibe::Json::object({ // real nesting
+            {"tags",   vermell::Json::array({"web", "http", "linux"})},
+            {"dev", vermell::Json::object({ // real nesting
                 {"name",     "kevin"},
                 {"lastname", "bohorquez"},
                 {"age",      100},
@@ -36,7 +36,7 @@ int main() {
     // parsing: validate and read a JSON body safely
     router.post("/sum",{[](Query &web) {
 
-        const auto body = vibe::Json::parse(web.body.raw());
+        const auto body = vermell::Json::parse(web.body.raw());
         if (!body.has_value())
             return web.json(R"({"error":"invalid json"})", 400);
 
@@ -46,7 +46,7 @@ int main() {
         if (a == nullptr || b == nullptr || !a->is_number() || !b->is_number())
             return web.json(R"({"error":"expected numbers a and b"})", 400);
 
-        web.json(vibe::Json::object({
+        web.json(vermell::Json::object({
             {"result", a->as_double() + b->as_double()},
         }).dump());
     }});

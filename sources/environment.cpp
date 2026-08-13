@@ -1,6 +1,6 @@
-#include "../include/vibe/util/environment.h"
+#include "../include/vermell/util/environment.h"
 
-#include "../include/vibe/util/process.h"
+#include "../include/vermell/util/process.h"
 
 #include <cstdlib>
 #include <fstream>
@@ -54,14 +54,14 @@ namespace {
 
 } // namespace
 
-vibe::Environment::Environment() {
+vermell::Environment::Environment() {
     // The .env sits next to the executable, wherever it is run from.
-    // process_instance() (not the vibe::process inline reference) keeps this
+    // process_instance() (not the vermell::process inline reference) keeps this
     // safe no matter which static initialization order a TU ends up with.
     load(process_instance().pwd + "/.env");
 }
 
-std::string vibe::Environment::get(const std::string& key, const std::string& fallback) const {
+std::string vermell::Environment::get(const std::string& key, const std::string& fallback) const {
     {
         std::shared_lock lock(mutex_);
         if (const auto it = values_.find(key); it != values_.end())
@@ -72,7 +72,7 @@ std::string vibe::Environment::get(const std::string& key, const std::string& fa
     return fallback;
 }
 
-bool vibe::Environment::has(const std::string& key) const {
+bool vermell::Environment::has(const std::string& key) const {
     {
         std::shared_lock lock(mutex_);
         if (values_.find(key) != values_.end())
@@ -81,17 +81,17 @@ bool vibe::Environment::has(const std::string& key) const {
     return std::getenv(key.c_str()) != nullptr;
 }
 
-void vibe::Environment::set(const std::string& key, const std::string& value) {
+void vermell::Environment::set(const std::string& key, const std::string& value) {
     std::unique_lock lock(mutex_);
     values_[key] = value;
 }
 
-void vibe::Environment::unset(const std::string& key) {
+void vermell::Environment::unset(const std::string& key) {
     std::unique_lock lock(mutex_);
     values_.erase(key);
 }
 
-bool vibe::Environment::load(const std::string& path) {
+bool vermell::Environment::load(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open())
         return false;
@@ -104,7 +104,7 @@ bool vibe::Environment::load(const std::string& path) {
     return true;
 }
 
-bool vibe::Environment::reload() {
+bool vermell::Environment::reload() {
     std::string current;
     {
         std::shared_lock lock(mutex_);
@@ -113,17 +113,17 @@ bool vibe::Environment::reload() {
     return !current.empty() && load(current);
 }
 
-std::string vibe::Environment::path() const {
+std::string vermell::Environment::path() const {
     std::shared_lock lock(mutex_);
     return path_;
 }
 
-size_t vibe::Environment::size() const {
+size_t vermell::Environment::size() const {
     std::shared_lock lock(mutex_);
     return values_.size();
 }
 
-vibe::Environment& vibe::environment_instance() {
+vermell::Environment& vermell::environment_instance() {
     static Environment instance;
     return instance;
 }

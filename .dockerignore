@@ -1,0 +1,33 @@
+# Dependencias y artefactos de compilacion
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.o
+*.a
+*.so
+*.so.*
+*.exe
+*.out
+
+# VCS
+.git/
+.gitignore
+
+# IDE y herramientas
+.vscode/
+.idea/
+vcpkg/
+CMakeUserPresets.json
+CMakeSettings.json
+
+# CI
+.github/
+
+# Backups y temporales
+*~
+*.swp
+*.swo
+*.gch
+*.pch

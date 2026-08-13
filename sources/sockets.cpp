@@ -2,7 +2,7 @@
 #include <poll.h>
 #include <cerrno>
 
-#include "../include/vibe/sockets.h"
+#include "../include/vermell/sockets.h"
 
 Engine::Engine(const uint16_t port) : PORT(port) {}
 
@@ -10,7 +10,7 @@ int Server::Close() {
      try {
 
           if (socket_id == nullptr)
-               return MG_OK; // nothing to close
+               return VER_SOCKET_OK; // nothing to close
 
           const int fd = *socket_id;
           socket_id.reset(); // invalidate first: a second Close() can never double-close
@@ -18,11 +18,11 @@ int Server::Close() {
           if (fd >= 0 && close(fd) < 0) {
                throw std::range_error("Failed to close socket");
           }
-          return MG_OK;
+          return VER_SOCKET_OK;
      }
      catch (const std::exception &e) {
           std::cerr << e.what() << '\n';
-          return MG_ERROR;
+          return VER_SOCKET_ERROR;
      }
 }
 
@@ -30,11 +30,11 @@ int Engine::setPort(const uint16_t xPort) {
      try {
           if(xPort == 0) throw std::range_error("Failed to set port");
           PORT = xPort;
-          return MG_OK;
+          return VER_SOCKET_OK;
      }
      catch (const std::exception &e) {
           std::cerr << e.what() << '\n';
-          return MG_ERROR;
+          return VER_SOCKET_ERROR;
      }
 }
 
@@ -49,7 +49,7 @@ int Engine::getPort() const {
      }
      catch (const std::exception &e) {
           std::cerr << e.what() << '\n';
-          return MG_ERROR;
+          return VER_SOCKET_ERROR;
      }
 }
 
@@ -61,11 +61,11 @@ int Engine::setBuffer(int size) {
                throw std::range_error("failed to set buffer_size");
           buffer_size = std::make_shared<int>(size);
           if(*buffer_size != size) throw std::range_error("failed to set buffer_size");
-          return MG_OK;
+          return VER_SOCKET_OK;
      }
      catch (const std::exception &e) {
           std::cerr << e.what() << '\n';
-          return MG_ERROR;
+          return VER_SOCKET_ERROR;
      }
 }
 
@@ -86,12 +86,12 @@ void Server::setSessions(int max) {
 int Server::setNonblocking(const int& socket_id) {
         int flags = fcntl(socket_id, F_GETFL, 0);
         if (flags == -1){
-            return MG_ERROR;
+            return VER_SOCKET_ERROR;
         }
         if (fcntl(socket_id, F_SETFL, flags | O_NONBLOCK) < 0){
-            return MG_ERROR;
+            return VER_SOCKET_ERROR;
         }
-        return MG_OK;
+        return VER_SOCKET_OK;
 }
 
 
@@ -127,7 +127,7 @@ int Server::on() {
                     &*option_mame,
                     sizeof(*option_mame));
 
-         if(setNonblocking(*socket_id) == MG_ERROR)
+         if(setNonblocking(*socket_id) == VER_SOCKET_ERROR)
              throw std::runtime_error("Failed to set nonblocking");
 
          address.sin_family = AF_INET;
@@ -144,7 +144,7 @@ int Server::on() {
                throw std::range_error("Failed to listen on socket");
            }
 
-         return MG_OK;
+          return VER_SOCKET_OK;
      }
      catch (const std::exception &e) {
           // Never leave a half-open listening socket behind on failure.
@@ -154,7 +154,7 @@ int Server::on() {
                socket_id.reset();
           }
           std::cerr << e.what() << '\n';
-          return MG_ERROR;
+          return VER_SOCKET_ERROR;
      }
 }
 

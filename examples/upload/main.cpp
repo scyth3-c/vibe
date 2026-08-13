@@ -1,4 +1,4 @@
-#include <vibe/vibe.h>
+#include <vermell/vermell.h>
 
 #include <iostream>
 
@@ -7,7 +7,7 @@
 // getParameters() and the files are exposed through body.files()
 // and body.file(field).
 //
-//   curl -F "title=hello vibe" -F "doc=@note.txt" http://localhost:8080/upload
+//   curl -F "title=hello vermell" -F "doc=@note.txt" http://localhost:8080/upload
 //   curl -F "a=@one.txt" -F "b=@two.txt" http://localhost:8080/upload-many
 //
 int main() {

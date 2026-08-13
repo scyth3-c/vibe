@@ -1,11 +1,11 @@
-# Contributing to Vibe
+# Contributing to Vermell
 
 ```Thank you for considering contributing to [Project Name]! We welcome contributions in all forms. This guide will help you get started.```
 
 ## How to Contribute
 
 ### Reporting Issues
-- Use the [Issue Tracker](https://github.com/vibecc/vibe/issues) to report bugs or request features.
+- Use the [Issue Tracker](https://github.com/vermellcc/vermell/issues) to report bugs or request features.
 - When reporting an issue, please follow the issue template to provide as much information as possible.
 
 ### Submitting Pull Requests

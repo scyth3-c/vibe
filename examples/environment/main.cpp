@@ -1,22 +1,22 @@
 #include <iostream>
-#include <vibe/vibe.h>
+#include <vermell/vermell.h>
 
 //
-// Application environment (Node.js-style): vibe loads the .env file sitting
+// Application environment (Node.js-style): vermell loads the .env file sitting
 // next to the executable automatically. When building this example by hand,
 // copy the .env next to your binary:
 //
-//   g++ -std=c++20 examples/environment/main.cpp -o server -I include -L build -lvibe -pthread
+//   g++ -std=c++20 examples/environment/main.cpp -o server -I include -L build -lvermell -pthread
 //   cp examples/environment/.env .
 //
 //   curl http://localhost:9000/
 //   curl http://localhost:9000/session
 //
-// Use `using vibe::environment;` for the short Node-like form.
+// Use `using vermell::environment;` for the short Node-like form.
 //
 int main() {
 
-    using vibe::environment;
+    using vermell::environment;
 
     Router router;
     // PORT comes from the .env (9000); 8080 is the fallback when absent.
@@ -24,8 +24,8 @@ int main() {
 
 
     router.get("/",{[](Query &web) {
-        web.json(vibe::Json::object({
-            {"app_name",   environment.get("APP_NAME", "vibe-app")},
+        web.json(vermell::Json::object({
+            {"app_name",   environment.get("APP_NAME", "vermell-app")},
             {"api_token",  environment["API_TOKEN"]}, // operator[] == get() without fallback
             {"debug",      environment.get_as<bool>("DEBUG", false)},
             {"max_conn",   environment.get_as<long>("MAX_CONN", 100)},
@@ -46,7 +46,7 @@ int main() {
     }});
 
 
-    std::cout << environment.get("APP_NAME", "vibe-app")
+    std::cout << environment.get("APP_NAME", "vermell-app")
               << " listening on http://localhost:" << environment.get("PORT", "8080") << '\n';
 
     router.listen();

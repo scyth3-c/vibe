@@ -2,17 +2,17 @@
 
 ## Reporting a Vulnerability
 
-At Vibe, we take security seriously. If you discover a security vulnerability within the Vibe framework, please send an email to [bohordo.png@gmail.com](mailto:bohordo.png@gmail.com) with a detailed description of the vulnerability and steps to reproduce it. Our security team will review and respond to your report promptly.
+At Vermell, we take security seriously. If you discover a security vulnerability within the Vermell framework, please send an email to [bohordo.png@gmail.com](mailto:bohordo.png@gmail.com) with a detailed description of the vulnerability and steps to reproduce it. Our security team will review and respond to your report promptly.
 
 ## Supported Versions
 
-The following versions of Vibe are currently supported with security updates:
+The following versions of Vermell are currently supported with security updates:
 
 - Version 1.0.x: Security patches will be provided for critical vulnerabilities.
 
 ## Reporting a Security Concern
 
-If you have a general security concern or have identified a potential security issue that does not qualify as a vulnerability, please reach out to [bohordo.png@gmail.com](mailto:bohordo.png@gmail.com) with the details. We appreciate your efforts in helping us maintain the security of the Vibe framework.
+If you have a general security concern or have identified a potential security issue that does not qualify as a vulnerability, please reach out to [bohordo.png@gmail.com](mailto:bohordo.png@gmail.com) with the details. We appreciate your efforts in helping us maintain the security of the Vermell framework.
 
 ## Responsible Disclosure
 

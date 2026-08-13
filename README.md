@@ -1,10 +1,10 @@
 
-# Vibe 🍃
+# Vermell 🍃
 
 **User-friendly and compact C++ Web Framework**
 
 <div style=" display:flex; justify-content: center">
-    <img src="https://drive.google.com/thumbnail?id=1YR1hFh0S9FR4MdWKz05PXlbWp9t1nsAr&sz=w-h" alt="vibe image">
+    <img src="https://drive.google.com/thumbnail?id=1YR1hFh0S9FR4MdWKz05PXlbWp9t1nsAr&sz=w-h" alt="vermell image">
     
 </div>
 
@@ -28,15 +28,15 @@
 
 ## Installation
 
-To install Vibe
+To install Vermell
 
 ### cmake
 
 <img alt="CMake" src="https://img.shields.io/badge/CMake-%23008FBA.svg?style=for-the-badge&logo=cmake&logoColor=white"/>
 
 ```shell
-$ git clone https://github.com/vibecc/vibe.git
-$ cd Vibe
+$ git clone https://github.com/vermellcc/vermell.git
+$ cd Vermell
 $ cmake .
 $ cmake --build .
 $ make install
@@ -48,7 +48,7 @@ $ make install
 
 #### ready to use 
 ```shell
-$ npx create-vibe-static
+$ npx create-vermell-static
 ```
 
 ### docker
@@ -56,16 +56,16 @@ $ npx create-vibe-static
 [![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=fff)](#)
 
 ```shell
-docker pull vibecc/vibe
+docker pull vermellcc/vermell
 ```
 
 
 ## Usage
 
-To use Vibe in your project, include the header files and link the static library in your C++ compiler.
+To use Vermell in your project, include the header files and link the static library in your C++ compiler.
 
 ```cpp
-#include <vibe/vibe.h>
+#include <vermell/vermell.h>
 
 int main() {
 
@@ -85,13 +85,13 @@ int main() {
 ## Compile
 #### compile your project
 ```bash
-$ g++ -std=c++20  main.cpp -o server -L. -lvibe
+$ g++ -std=c++20  main.cpp -o server -L. -lvermell
 ```
 
 ## Server configuration
 
-Every knob of the request/response pipeline lives in `vibe::Config`
-(`include/vibe/config.hpp`). Pass it whole with `router.configure({...})`
+Every knob of the request/response pipeline lives in `vermell::Config`
+(`include/vermell/config.hpp`). Pass it whole with `router.configure({...})`
 (defaults preserve the legacy behavior):
 
 ```cpp
@@ -125,6 +125,53 @@ router.setThreads(4)
 
 The active configuration is readable at runtime with `router.config()`.
 A full annotated example lives in [`examples/configuration`](examples/configuration/main.cpp).
+
+## MIME types and file rendering
+
+Vermell detects the `Content-Type` from the final extension of a file. This
+means `kevin.txt.html` is served as `text/html`, and matching is
+case-insensitive. Query strings and fragments are ignored when determining the
+type. Unknown extensions use `application/octet-stream`.
+
+```cpp
+web.readFile("public/data.json");       // application/json
+web.readFileX("public/page.html");      // text/html
+web.file("public/assets/app.js");       // application/javascript
+
+web.send("{}", vermell::mime::json);     // reusable common MIME constants
+```
+
+An explicit type passed to `readFile` or `readFileX` always takes precedence.
+The registry includes common text, data, document, image, audio, video, font,
+archive and executable formats.
+
+### readFileX: C++ templates
+
+A template may hold **any number** of `$ ... $` blocks. Each block runs at
+its position in the page and whatever it writes to `std::cout` is spliced
+right there; the markup in between is served byte-exact:
+
+```html
+<body>
+    $
+        for (int i = 0; i < 10; i++) {
+            std::cout << "<button> soy un boton, numero: " << i << "</button>";
+        }
+    $
+
+    $
+
+    std::cout << "<button>test</button>";
+
+    $
+</body>
+```
+
+Blocks share a single `main()`, so variables declared in an earlier block are
+visible in later ones. A `$` without a closing partner is treated as literal
+text (a price like `$5` never breaks the page). The generated program embeds
+the static markup as fully escaped string literals, so template text cannot
+inject code into the compilation.
 
 ## Render security
 
@@ -187,35 +234,35 @@ template with different flags never serves a stale binary.
 ## Process & environment
 
 Node.js-style runtime information and configuration, available just by
-including `vibe/vibe.h`.
+including `vermell/vermell.h`.
 
-`vibe::process` captures the process data once (first use):
+`vermell::process` captures the process data once (first use):
 
 ```cpp
-vibe::process.pwd        // directory containing the executable
-vibe::process.cwd        // working directory it was launched from
-vibe::process.exec_path  // absolute path of the executable
-vibe::process.pid        // process id (also ppid, argv, hostname,
+vermell::process.pwd        // directory containing the executable
+vermell::process.cwd        // working directory it was launched from
+vermell::process.exec_path  // absolute path of the executable
+vermell::process.pid        // process id (also ppid, argv, hostname,
                          // username, platform, arch)
-vibe::process.uptime()        // seconds since the process started
-vibe::process.memory_usage()  // resident memory in bytes
-vibe::process.path(".env")    // path resolved against the executable directory
+vermell::process.uptime()        // seconds since the process started
+vermell::process.memory_usage()  // resident memory in bytes
+vermell::process.path(".env")    // path resolved against the executable directory
 ```
 
-`vibe::environment` loads the `.env` file sitting **next to the
+`vermell::environment` loads the `.env` file sitting **next to the
 executable** automatically, and also holds runtime "session" values.
 Values from the file and `set()` take precedence over the OS
 environment; every method is thread-safe.
 
 ```cpp
-vibe::environment.get("TOKEN")              // .env / set(), else OS env, else ""
-vibe::environment.get("TOKEN", "fallback")
-vibe::environment.get_as<int>("PORT", 8080) // typed: arithmetic, bool, string
-vibe::environment["TOKEN"]
+vermell::environment.get("TOKEN")              // .env / set(), else OS env, else ""
+vermell::environment.get("TOKEN", "fallback")
+vermell::environment.get_as<int>("PORT", 8080) // typed: arithmetic, bool, string
+vermell::environment["TOKEN"]
 
-vibe::environment.set("request_count", "1") // runtime session value
-vibe::environment.reload()                  // re-read the .env file
-vibe::environment.load("config/.env")       // or load another file
+vermell::environment.set("request_count", "1") // runtime session value
+vermell::environment.reload()                  // re-read the .env file
+vermell::environment.load("config/.env")       // or load another file
 ```
 
 The `.env` syntax supports `#` comments, `export KEY=VALUE`, quoted
@@ -245,9 +292,9 @@ servers for the different use cases:
   [graceful-shutdown](examples/graceful-shutdown/main.cpp),
   [middlewares](examples/middlewares/main.cpp),
   [router](examples/router/) (route separation with `Route_t` + `use`),
-  [process](examples/process/main.cpp) (`vibe::process` runtime info),
+  [process](examples/process/main.cpp) (`vermell::process` runtime info),
   [environment](examples/environment/main.cpp) (`.env` + session values
-  with `vibe::environment`)
+  with `vermell::environment`)
 
 ## Support
 
@@ -282,7 +329,7 @@ and modify the file tests/debug.cpp
 
 ## Contribution
 
-Contributions are welcome! If you want to contribute to Vibe, please follow these guidelines:
+Contributions are welcome! If you want to contribute to Vermell, please follow these guidelines:
 - Fork the repository.
 - Create a branch for your new feature (`git checkout -b feature/new-feature`).
 - Make your changes and commit meaningful messages.

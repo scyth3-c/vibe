@@ -1,19 +1,19 @@
 {
-  "name": "vibe",
+  "name": "vermell",
   "version": "1.0.0",
   "description": "User-friendly and compact C++ Web Framework",
   "scripts": {
     "build": "cmake -DTESTING=ON -S . -B build/ && cmake --build build",
     "test": "ctest --test-dir build",
     "dev:build": "cmake -S . -B build/ && cmake --build build",
-    "dev:run": "cmake -S . -B build/ && cmake --build build && ./build/vibex"
+    "dev:run": "cmake -S . -B build/ && cmake --build build && ./build/vermellx"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/vibecc/core.git"
+    "url": "https://github.com/vermellcc/core.git"
   },
   "bugs": {
-    "url": "https://github.com/vibecc/core/issues"
+    "url": "https://github.com/vermellcc/core/issues"
   },
   "keywords": [
     "http",

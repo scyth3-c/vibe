@@ -1,4 +1,4 @@
-#include "../include/vibe/util/parameter_proccess.h"
+#include "../include/vermell/util/parameter_proccess.h"
 
 HTTP_QUERY::HTTP_QUERY() = default;
 HTTP_QUERY::~HTTP_QUERY() = default;
@@ -11,7 +11,7 @@ string HTTP_QUERY::selectPerType(const string &target, const string &conten_type
 
 string HTTP_QUERY::route_refactor_params(const string& _target)  {
 
-    const auto msg = vibe::http::Message::parse(_target);
+    const auto msg = vermell::http::Message::parse(_target);
     if (!msg)
         return NOT_PARAMS;
 
@@ -21,8 +21,8 @@ string HTTP_QUERY::route_refactor_params(const string& _target)  {
 
     // urlencoded and multipart bodies are key/value carriers: hand over the
     // raw body; every other type follows the legacy "data=<body>" contract.
-    if (content_type == vibe::http::TYPE_FORM_URLENCODED
-        || content_type == vibe::http::TYPE_MULTIPART) {
+    if (content_type == vermell::http::TYPE_FORM_URLENCODED
+        || content_type == vermell::http::TYPE_MULTIPART) {
         return msg->body.empty() ? NOT_PARAMS : msg->body;
     }
 
@@ -33,7 +33,7 @@ string HTTP_QUERY::route_refactor_params(const string& _target)  {
 }
 
 string HTTP_QUERY::route_refactor_params_get(const string& rawresponse) {
-    const auto msg = vibe::http::Message::parse(rawresponse);
+    const auto msg = vermell::http::Message::parse(rawresponse);
     if (!msg || msg->query.empty())
         return NOT_PARAMS;
     return msg->query;
@@ -57,19 +57,19 @@ string HTTP_QUERY::headers_from(const string& response)  {
 }
 
 std::pair<string, string> HTTP_QUERY::route_refactor(const string& target){
-    const auto msg = vibe::http::Message::parse(target);
+    const auto msg = vermell::http::Message::parse(target);
     if (!msg)
         return {};
     return {msg->method, msg->path};
 }
 
 string HTTP_QUERY::x_www_form_urlencoded(const string &target){
-    const auto msg = vibe::http::Message::parse(target);
+    const auto msg = vermell::http::Message::parse(target);
     return msg ? msg->body : string{};
 }
 
 string HTTP_QUERY::raw_form_encoded(const string &target) {
-    const auto msg = vibe::http::Message::parse(target);
+    const auto msg = vermell::http::Message::parse(target);
     if (!msg || msg->body.empty())
         return RAW_ERROR;
     return string(RAW_TARGET) + msg->body;
@@ -80,7 +80,7 @@ string HTTP_QUERY::findContenType(const string &text) {
     if (text.empty())
         return STR_ERR;
 
-    const auto msg = vibe::http::Message::parse(text);
+    const auto msg = vermell::http::Message::parse(text);
     if (!msg)
         return STR_ERR;
 

@@ -1,8 +1,8 @@
-#include <vibe/vibe.h>
+#include <vermell/vermell.h>
 
 //
 // Server configuration: every knob of the request/response pipeline lives
-// in vibe::Config (include/vibe/config.hpp). Pass it whole with
+// in vermell::Config (include/vermell/config.hpp). Pass it whole with
 // router.configure({...}) using designated initializers, or use the
 // chainable setters. Defaults preserve the legacy behavior.
 //

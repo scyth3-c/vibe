@@ -1,13 +1,13 @@
-# Vibe Examples
+# Vermell Examples
 
 Each folder is a self-contained server. Build any example against the
 in-repo library from the repository root:
 
 ```shell
-g++ -std=c++20 examples/hello-world/main.cpp -o server -I include -L build -lvibe -pthread
+g++ -std=c++20 examples/hello-world/main.cpp -o server -I include -L build -lvermell -pthread
 ```
 
-(or against an installed Vibe with `g++ -std=c++20 main.cpp -o server -lvibe -pthread`)
+(or against an installed Vermell with `g++ -std=c++20 main.cpp -o server -lvermell -pthread`)
 
 Every server listens on `http://localhost:8080` unless it says otherwise.
 
@@ -22,15 +22,15 @@ Every server listens on `http://localhost:8080` unless it says otherwise.
 | [middlewares](middlewares/main.cpp) | Middleware chains and `web.next()`. |
 | [callbacks](callbacks/main.cpp) | Post-response callbacks and per-response status codes. |
 | [headers](headers/main.cpp) | Reading request headers and setting response headers (`HEADERS`, `setHeaders`). |
-| [simple-json](simple-json/main.cpp) | Building and parsing JSON with the `vibe::Json` DOM (native types, escaping, strict parser); legacy `JSON_s` facade. |
+| [simple-json](simple-json/main.cpp) | Building and parsing JSON with the `vermell::Json` DOM (native types, escaping, strict parser); legacy `JSON_s` facade. |
 | [files](files/main.cpp) | Serving files: `readFile` with explicit type, `file()` with auto-detected MIME, `readFileX` C++ templates. |
 | [file-template](file-template/main.cpp) | `compose()`: HTML pages assembled from modules (`#[name];`). |
 | [data-template](data-template/main.cpp) | `render()`: HTML templates with `[[variable]]` substitution. |
 | [route-cooling](route-cooling/main.cpp) | Per-route cooldown with `web.guard()` and custom cooldown messages. |
 | [graceful-shutdown](graceful-shutdown/main.cpp) | Stopping the server with `setListenStatus(neo::STOP)`; `listenOne()` for one-shot servers. |
 | [router](router/) | Organizing routes: `Route_t` + `router.use()` and reusable `MiddlewareList`s. |
-| [process](process/main.cpp) | Node.js-style process info: `vibe::process.pwd`, `exec_path`, `pid`, `arch`, `uptime()`, `memory_usage()`, ... |
-| [environment](environment/main.cpp) | `.env` loaded from the executable directory: `vibe::environment.get`, typed `get_as<T>`, runtime session values with `set()`. |
+| [process](process/main.cpp) | Node.js-style process info: `vermell::process.pwd`, `exec_path`, `pid`, `arch`, `uptime()`, `memory_usage()`, ... |
+| [environment](environment/main.cpp) | `.env` loaded from the executable directory: `vermell::environment.get`, typed `get_as<T>`, runtime session values with `set()`. |
 
 ## Try them
 

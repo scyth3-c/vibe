@@ -1,4 +1,4 @@
-#include "../../include/vibe/request/io.h"
+#include "../../include/vermell/request/io.h"
 
 #include <poll.h>
 
@@ -13,8 +13,8 @@ namespace {
 
     // Maps the parser's framing verdict to a transport status. Message::inspect
     // is the single source of truth for request completeness and validity.
-    RequestIO::ReadStatus to_read_status(const vibe::http::Message::Framing framing) noexcept {
-        using Framing = vibe::http::Message::Framing;
+    RequestIO::ReadStatus to_read_status(const vermell::http::Message::Framing framing) noexcept {
+        using Framing = vermell::http::Message::Framing;
         switch (framing) {
             case Framing::Complete:        return RequestIO::ReadStatus::Ok;
             case Framing::BadRequest:      return RequestIO::ReadStatus::BadRequest;
@@ -30,7 +30,7 @@ RequestIO::RequestIO(const shared_ptr<vector<epoll_event> > &events,
                      int &filed,
                      int &epoll_fd,
                      const shared_ptr<Server> &con,
-                     const vibe::Config &config) : events(events),
+                     const vermell::Config &config) : events(events),
                                                    routes(routes),
                                                    file_descriptor(std::make_unique<int>(filed)),
                                                    epoll_fd(std::make_unique<int>(epoll_fd)),
@@ -92,15 +92,15 @@ void RequestIO::AcceptPending() const {
                                                   reinterpret_cast<sockaddr *>(&client_addr),
                                                   &client_addr_len);
 
-        if (client_file_descriptor == VB_NVALUE) {
+        if (client_file_descriptor == VER_NVALUE) {
             if (errno == EINTR)
                 continue;
             if (errno != EAGAIN && errno != EWOULDBLOCK)
-                terminal(VB_EPOLL_CERR, strerror(errno));
+                terminal(VER_EPOLL_CERR, strerror(errno));
             return;
         }
 
-        if (Server::setNonblocking(client_file_descriptor) == MG_ERROR) {
+        if (Server::setNonblocking(client_file_descriptor) == VER_SOCKET_ERROR) {
             close(client_file_descriptor);
             continue;
         }
@@ -109,8 +109,8 @@ void RequestIO::AcceptPending() const {
         client_event.events = EPOLLIN; // level triggered: it is removed from epoll on dispatch
         client_event.data.fd = client_file_descriptor;
 
-        if (epoll_ctl(*epoll_fd, EPOLL_CTL_ADD, client_file_descriptor, &client_event) == VB_NVALUE) {
-            terminal(VB_EPOLL_CERR, strerror(errno));
+        if (epoll_ctl(*epoll_fd, EPOLL_CTL_ADD, client_file_descriptor, &client_event) == VER_NVALUE) {
+            terminal(VER_EPOLL_CERR, strerror(errno));
             close(client_file_descriptor);
         }
     }
@@ -141,7 +141,7 @@ void RequestIO::HandleClient(const int event_fd) const {
             default: break; // Failed: the socket is broken, nothing can be sent
         }
         if (code != 0)
-            base->sendResponse(vibe::http::Response{}
+            base->sendResponse(vermell::http::Response{}
                                    .status(code)
                                    .type("application/json")
                                    .body(std::string(R"lit({"error":")lit") + error + R"lit("})lit")
@@ -169,8 +169,8 @@ RequestIO::ReadStatus RequestIO::ReadRequest(const int event_fd, string &out) co
             if (out.size() > config_.max_request_size)
                 return ReadStatus::TooLarge;
 
-            const auto inspection = vibe::http::Message::inspect(out);
-            if (inspection.framing == vibe::http::Message::Framing::Incomplete) {
+            const auto inspection = vermell::http::Message::inspect(out);
+            if (inspection.framing == vermell::http::Message::Framing::Incomplete) {
                 // The client promised a body bigger than the whole-request
                 // cap: reject right after the head instead of reading it all.
                 if (inspection.expected > config_.max_request_size)
@@ -180,7 +180,7 @@ RequestIO::ReadStatus RequestIO::ReadRequest(const int event_fd, string &out) co
             return to_read_status(inspection.framing);
         }
 
-        if (bytes == VB_OK)
+        if (bytes == VER_OK)
             break; // peer closed: the request must stand on its own
 
         if (errno == EINTR)
@@ -208,15 +208,15 @@ RequestIO::ReadStatus RequestIO::ReadRequest(const int event_fd, string &out) co
     if (out.empty())
         return ReadStatus::Failed;
 
-    const auto inspection = vibe::http::Message::inspect(out);
-    return inspection.framing == vibe::http::Message::Framing::Incomplete
+    const auto inspection = vermell::http::Message::inspect(out);
+    return inspection.framing == vermell::http::Message::Framing::Incomplete
                ? ReadStatus::BadRequest
                : to_read_status(inspection.framing);
 }
 
 
 void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_ptr<RoutesMap> &routes) const {
-    string send_target = vibe::http::Response{}
+    string send_target = vermell::http::Response{}
                              .status(404)
                              .type("application/json")
                              .body(R"lit({"error":"this route is not defined"})lit")
@@ -225,7 +225,7 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
     try {
         const string socket_response = instance->getResponse();
 
-        if (const auto message = vibe::http::Message::parse(socket_response)) {
+        if (const auto message = vermell::http::Message::parse(socket_response)) {
 
             if (const auto itr = routes->find(message->path + message->method); itr != routes->end()) {
 
@@ -243,7 +243,7 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
                     std::unique_ptr<string> guard_msg;
                     auto [data, time_key] = itr->second->middlewares.execute(*message, guard_msg, config_.render);
 
-                    if (time_key > VB_OK) {
+                    if (time_key > VER_OK) {
                         std::lock_guard<std::mutex> lock(itr->second->route_mutex);
                         itr->second->time_key = time_key;
                         itr->second->time_point = std::chrono::system_clock::now();
@@ -255,7 +255,7 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
         } else {
             // The bytes were readable but are not an HTTP request: that is
             // a 400, never a 404 (the route table is not the problem).
-            send_target = vibe::http::Response{}
+            send_target = vermell::http::Response{}
                               .status(400)
                               .type("application/json")
                               .body(R"lit({"error":"malformed request"})lit")
@@ -269,7 +269,7 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
 
     // The worker owns the fd: this is the single close point of the connection.
     if (close(instance->getDescription()) < enums::neo::eReturn::OK && errno != EBADF)
-        terminal(VB_SOCKET_CLOSE, strerror(errno));
+        terminal(VER_SOCKET_CLOSE, strerror(errno));
 }
 
 

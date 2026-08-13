@@ -1,16 +1,16 @@
-#include "../../include/vibe/request/request.hpp"
+#include "../../include/vermell/request/request.hpp"
 
 Request::Request() = default;
 
 
-void Request::consume(const vibe::http::Message& msg) {
+void Request::consume(const vermell::http::Message& msg) {
     clear_parameters();
     _headers      = msg.headers;
     _body         = msg.body;
     _content_type = std::string(msg.content_type());
     _files.clear();
 
-    using namespace vibe::http;
+    using namespace vermell::http;
 
     // GET carries its parameters in the query string (legacy behavior).
     if (msg.method == "GET") {
@@ -58,7 +58,7 @@ void Request::setContentType(string content_type) {
     _content_type = std::move(content_type);
 }
 
-void Request::setFiles(vector<vibe::http::UploadedFile> files) {
+void Request::setFiles(vector<vermell::http::UploadedFile> files) {
     _files = std::move(files);
 }
 
@@ -68,7 +68,7 @@ void Request::setRawParametersData(string &&_raw) {
     if (_raw.empty() || _raw == NOT_PARAMS)
         return;
 
-    auto parsed = vibe::http::parse_query(_raw);
+    auto parsed = vermell::http::parse_query(_raw);
     _parameters.insert(_parameters.end(),
                        std::make_move_iterator(parsed.begin()),
                        std::make_move_iterator(parsed.end()));

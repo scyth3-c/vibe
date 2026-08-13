@@ -1,4 +1,4 @@
-#include "../include/vibe/util/process.h"
+#include "../include/vermell/util/process.h"
 
 #include <array>
 #include <climits>
@@ -76,7 +76,7 @@ namespace {
 
 } // namespace
 
-vibe::Process::Process()
+vermell::Process::Process()
     : exec_path(exe_path()),
       exec_name(base_name(exec_path)),
       pwd(dir_name(exec_path)),
@@ -90,11 +90,11 @@ vibe::Process::Process()
       argv(command_line()),
       started_(std::chrono::steady_clock::now()) {}
 
-double vibe::Process::uptime() const noexcept {
+double vermell::Process::uptime() const noexcept {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - started_).count();
 }
 
-std::uint64_t vibe::Process::memory_usage() const noexcept {
+std::uint64_t vermell::Process::memory_usage() const noexcept {
     std::ifstream status("/proc/self/status");
     std::string key;
     while (status >> key) {
@@ -108,7 +108,7 @@ std::uint64_t vibe::Process::memory_usage() const noexcept {
     return 0;
 }
 
-std::string vibe::Process::path(const std::string& relative) const {
+std::string vermell::Process::path(const std::string& relative) const {
     if (relative.empty())
         return pwd;
     if (relative.front() == '/')
@@ -116,7 +116,7 @@ std::string vibe::Process::path(const std::string& relative) const {
     return pwd + "/" + relative;
 }
 
-const vibe::Process& vibe::process_instance() {
+const vermell::Process& vermell::process_instance() {
     static const Process instance;
     return instance;
 }

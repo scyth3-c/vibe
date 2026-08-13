@@ -1,4 +1,4 @@
-#include <vibe/vibe.h>
+#include <vermell/vermell.h>
 
 int main() {
 
@@ -21,11 +21,12 @@ int main() {
     }});
 
 
-    // readFileX: C++ template, compiled and executed inside a sandbox
+    // readFileX detects text/html from cpp.html automatically. An explicit
+    // type can still be supplied when the response should override the file.
     // (turn it off with .render = { .allow_readfilex = false })
     router.get("/cpp",{[&](Query &web) {
 
-        web.readFileX("cpp.html", "text/html");
+        web.readFileX("cpp.html");
     }});
 
 
