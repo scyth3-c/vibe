@@ -71,8 +71,13 @@ namespace vermell::srender {
         std::array<char, 16384> chunk{};
         while (in) {
             const size_t room = max_bytes - out.size();
-            if (room == 0)
-                return {ReadErr::TooLarge, {}}; // grew past the cap mid-read
+            if (room == 0) {
+                // Exactly at the cap: only a real extra byte makes it
+                // TooLarge — a file of precisely max_bytes is legal.
+                if (in.peek() != std::char_traits<char>::eof())
+                    return {ReadErr::TooLarge, {}};
+                break;
+            }
             in.read(chunk.data(), static_cast<std::streamsize>(std::min(room, chunk.size())));
             out.append(chunk.data(), static_cast<size_t>(in.gcount()));
         }

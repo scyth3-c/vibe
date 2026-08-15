@@ -114,7 +114,7 @@ struct utility_t {
 
         string body = R"lit({"message":")lit"
             + string(not msg.empty()
-                         ? std::move(msg)
+                         ? json_escape(msg)
                          : "wait, this route has a " + std::to_string(static_cast<int>(seconds)) + " second cooldown")
             + R"lit("})lit";
 
@@ -134,6 +134,35 @@ struct utility_t {
     }
 
 private:
+    // Escapes a value for embedding inside a JSON string literal: a custom
+    // guard message can carry '"' or control characters and must never
+    // break out of the {"message":"..."} envelope.
+    static std::string json_escape(const std::string_view in) {
+        constexpr char HEX[] = "0123456789abcdef";
+        std::string out;
+        out.reserve(in.size());
+        for (const char ch : in) {
+            switch (ch) {
+                case '"':  out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\b': out += "\\b";  break;
+                case '\f': out += "\\f";  break;
+                case '\n': out += "\\n";  break;
+                case '\r': out += "\\r";  break;
+                case '\t': out += "\\t";  break;
+                default:
+                    if (const auto c = static_cast<unsigned char>(ch); c < 0x20) {
+                        out += "\\u00";
+                        out += HEX[c >> 4];
+                        out += HEX[c & 0x0F];
+                    } else {
+                        out += ch;
+                    }
+            }
+        }
+        return out;
+    }
+
     // The legacy API hands over headers as a raw "Name: value\n..." block;
     // it is parsed in place with string_views: no per-line allocations.
     static void apply_headers(vermell::http::Response& response, const std::string_view headers) {

@@ -517,6 +517,28 @@ TEST(SecureRenderUnit, ResponseHeaderInjectionStripped) {
      EXPECT_NE(wire.find("X-Weird: v\r\n"), string::npos);
 }
 
+TEST(SecureRenderUnit, GuardRouteEscapesJsonMessage) {
+     // A custom guard message with quotes/control chars must not break out
+     // of the {"message":"..."} JSON envelope.
+     const string wire = utility_t::guard_route(5, "wait\"; injected:\"yes");
+     EXPECT_EQ(wire.find("injected:\"yes"), string::npos);
+     EXPECT_NE(wire.find("wait\\\"; injected:\\\"yes"), string::npos);
+}
+
+TEST(SecureRenderUnit, ReadBoundedAcceptsExactlyMaxBytes) {
+     // Off-by-one regression: a file of precisely max_bytes must be served.
+     const string file = "./sec_exact.bin";
+     { std::ofstream out(file, std::ios::binary); out << string(4096, 'A'); }
+
+     const auto exact = vermell::srender::read_bounded(file, 4096);
+     EXPECT_EQ(exact.err, vermell::srender::ReadErr::Ok);
+     EXPECT_EQ(exact.data.size(), 4096UL);
+
+     const auto over = vermell::srender::read_bounded(file, 4095);
+     EXPECT_EQ(over.err, vermell::srender::ReadErr::TooLarge);
+     std::filesystem::remove(file);
+}
+
 TEST(SecureRenderUnit, BasicReadRejectsNonRegularFiles) {
      // A directory is not a file: the legacy reader served an empty 200.
      auto [data, status] = BasicRead::processing("/tmp");
@@ -1200,6 +1222,16 @@ TEST(ParserHardeningUnit, MalformedHeaderLinesAreRejected) {
      EXPECT_TRUE (Msg::parse("GET / HTTP/1.1\r\nGood-Name: x\r\n\r\n").has_value());
 }
 
+TEST(ParserHardeningUnit, ObsFoldedHeadersAreRejected) {
+     // RFC 9112 §5.2: a line starting with SP/HTAB is an obsolete fold of the
+     // previous field and MUST be rejected — never reinterpreted as a new
+     // header (behind a proxy that folds differently it is a desync vector).
+     EXPECT_FALSE(Msg::parse("GET / HTTP/1.1\r\nHost: x\r\n X-Injected: yes\r\n\r\n").has_value());
+     EXPECT_FALSE(Msg::parse("GET / HTTP/1.1\r\nHost: x\r\n\tX-Injected: yes\r\n\r\n").has_value());
+     EXPECT_EQ(Msg::inspect("GET / HTTP/1.1\r\nHost: x\r\n X-Injected: yes\r\n\r\n").framing,
+               Framing::BadRequest);
+}
+
 TEST(ParserHardeningUnit, BodyWithoutContentLengthIsIgnored) {
      // RFC 9112 §6.3: no Content-Length and no Transfer-Encoding = empty body.
      // Bytes after the head are NOT the body (and we close the connection,
@@ -1217,6 +1249,30 @@ TEST(ParserHardeningUnit, BodyIsExactlyContentLengthBytes) {
 
      // defense in depth: fewer bytes than promised must not parse
      EXPECT_FALSE(Msg::parse("POST / HTTP/1.1\r\nContent-Length: 100\r\n\r\nshort").has_value());
+}
+
+TEST(ParserHardeningUnit, MultipartNameMatchesOnlyAtParameterBoundary) {
+     // filename BEFORE name: "name=" must not be matched as a substring
+     // inside "filename=", or the field name is stolen by the file name.
+     const string body =
+         "--b\r\n"
+         "Content-Disposition: form-data; filename=\"evil.txt\"; name=\"doc\"\r\n"
+         "\r\n"
+         "DATA\r\n"
+         "--b--\r\n";
+     const auto mp = vermell::http::parse_multipart(body, "b");
+     ASSERT_EQ(mp.files.size(), 1UL);
+     EXPECT_EQ(mp.files[0].field, "doc");
+     EXPECT_EQ(mp.files[0].filename, "evil.txt");
+     EXPECT_EQ(mp.files[0].content, "DATA");
+
+     // the classic order keeps working, and unknown keys stay empty
+     EXPECT_EQ(vermell::http::detail::disposition_param(
+                   R"(form-data; name="doc"; filename="a.txt")", "name"), "doc");
+     EXPECT_EQ(vermell::http::detail::disposition_param(
+                   R"(form-data; name="doc"; filename="a.txt")", "filename"), "a.txt");
+     EXPECT_TRUE(vermell::http::detail::disposition_param(
+                   R"(form-data; name="doc")", "filename").empty());
 }
 
 // Sends raw bytes to a one-shot server and returns the raw wire response.

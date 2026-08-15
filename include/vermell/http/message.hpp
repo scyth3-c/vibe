@@ -305,6 +305,13 @@ namespace vermell::http {
                     if (line.empty())
                         continue;
 
+                    // RFC 9112 §5.2: a line starting with SP/HTAB is an
+                    // obsolete fold of the previous field. It MUST be
+                    // rejected, never reinterpreted as a new header (behind
+                    // a proxy that folds differently it is a desync vector).
+                    if (line.front() == ' ' || line.front() == '\t')
+                        return std::nullopt;
+
                     const size_t colon = line.find(':');
                     if (colon == std::string_view::npos || colon == 0)
                         return std::nullopt; // malformed field line
@@ -383,6 +390,12 @@ namespace vermell::http {
                     continue;
                 if (++count > MAX_HEADERS) {
                     scan.too_many = true;
+                    return scan;
+                }
+
+                // obs-fold: parse() rejects it with 400; framing must agree.
+                if (line.front() == ' ' || line.front() == '\t') {
+                    scan.bad = true;
                     return scan;
                 }
 
@@ -487,17 +500,34 @@ namespace vermell::http {
 
         // Extracts a quoted token from a Content-Disposition header value:
         // disposition_param(R"(form-data; name="doc"; filename="a.txt")", "name") -> "doc"
+        //
+        // The key is matched only at a parameter boundary (the start of the
+        // value or right after a ';'): a plain substring search would find
+        // "name=" inside "filename=" when filename is sent first.
         [[nodiscard]] inline std::string disposition_param(const std::string_view disposition,
                                                            const std::string_view key) {
-            const std::string needle = std::string(key) + "=\"";
-            const size_t begin = disposition.find(needle);
-            if (begin == std::string_view::npos)
-                return {};
-            const size_t value_begin = begin + needle.size();
-            const size_t value_end = disposition.find('"', value_begin);
-            if (value_end == std::string_view::npos)
-                return {};
-            return std::string(disposition.substr(value_begin, value_end - value_begin));
+            size_t pos = 0;
+            while (pos <= disposition.size()) {
+                const size_t semi = disposition.find(';', pos);
+                const std::string_view param = trim(disposition.substr(
+                    pos, semi == std::string_view::npos ? semi : semi - pos));
+
+                if (param.size() >= key.size() + 2
+                    && param.substr(0, key.size()) == key
+                    && param[key.size()] == '='
+                    && param[key.size() + 1] == '"') {
+                    const size_t value_begin = key.size() + 2;
+                    const size_t value_end = param.find('"', value_begin);
+                    if (value_end == std::string_view::npos)
+                        return {};
+                    return std::string(param.substr(value_begin, value_end - value_begin));
+                }
+
+                if (semi == std::string_view::npos)
+                    break;
+                pos = semi + 1;
+            }
+            return {};
         }
 
     } // namespace detail
