@@ -48,6 +48,10 @@ class RequestIO {
 
     shared_ptr<threading::ThreadPool> thread_pool_;
 
+    // Open client connections (incremented on accept, decremented on close).
+    // Enforced against Config::max_connections to bound connection-flood DoS.
+    mutable std::atomic<size_t> active_connections_{0};
+
     size_t threads_{[this] {
         if (config_.threads != 0)
             return config_.threads;

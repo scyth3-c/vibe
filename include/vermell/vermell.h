@@ -64,6 +64,7 @@ public:
     Vermell& setThreads(size_t threads) noexcept;
     Vermell& setMaxEvents(int max_events) noexcept;
     Vermell& setMaxQueueSize(size_t max_queue_size) noexcept;
+    Vermell& setMaxConnections(size_t max_connections) noexcept;
     Vermell& setBacklog(int backlog) noexcept;
     Vermell& setBufferSize(int size) noexcept;
 
@@ -234,6 +235,12 @@ Vermell<T>& Vermell<T>::setMaxEvents(const int max_events) noexcept {
 template <class T>
 Vermell<T>& Vermell<T>::setMaxQueueSize(const size_t max_queue_size) noexcept {
     config_.max_queue_size = max_queue_size;
+    return *this;
+}
+
+template <class T>
+Vermell<T>& Vermell<T>::setMaxConnections(const size_t max_connections) noexcept {
+    config_.max_connections = max_connections;
     return *this;
 }
 

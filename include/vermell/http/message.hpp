@@ -34,7 +34,25 @@ namespace vermell::http {
         [[nodiscard]] size_t size()  const noexcept { return content.size(); }
         [[nodiscard]] bool   empty() const noexcept { return content.empty(); }
 
+        // Persists the file. Refuses absolute paths and any ".." traversal
+        // segment, so even a caller that forgets to sanitize the filename
+        // cannot write outside its chosen directory.
         bool save_to(const std::string& path) const {
+            if (path.empty() || path.front() == '/' || path.front() == '\\')
+                return false;
+
+            size_t pos = 0;
+            while (pos < path.size()) {
+                const size_t next = path.find_first_of("/\\", pos);
+                const std::string_view segment(path.data() + pos,
+                                               (next == std::string::npos ? path.size() : next) - pos);
+                if (segment == "..")
+                    return false;
+                if (next == std::string::npos)
+                    break;
+                pos = next + 1;
+            }
+
             std::ofstream out(path, std::ios::binary | std::ios::trunc);
             if (!out.is_open())
                 return false;
@@ -498,6 +516,21 @@ namespace vermell::http {
 
     namespace detail {
 
+        // Reduces a client-supplied filename to a bare, safe file name:
+        // strips any directory prefix (both '/' and '\'), and returns "" for
+        // ".", "..", empty names or names containing control characters.
+        // An empty result means "do not trust this name".
+        [[nodiscard]] inline std::string sanitize_filename(std::string name) {
+            if (const size_t slash = name.find_last_of("/\\"); slash != std::string::npos)
+                name = name.substr(slash + 1);
+            if (name.empty() || name == "." || name == "..")
+                return {};
+            for (const char c : name)
+                if (static_cast<unsigned char>(c) < 0x20 || c == 0x7f)
+                    return {};
+            return name;
+        }
+
         // Extracts a quoted token from a Content-Disposition header value:
         // disposition_param(R"(form-data; name="doc"; filename="a.txt")", "name") -> "doc"
         //
@@ -595,7 +628,7 @@ namespace vermell::http {
             if (name.empty())
                 continue;
 
-            if (std::string filename = detail::disposition_param(disposition, "filename"); !filename.empty()) {
+            if (std::string filename = detail::sanitize_filename(detail::disposition_param(disposition, "filename")); !filename.empty()) {
                 UploadedFile file;
                 file.field    = std::move(name);
                 file.filename = std::move(filename);

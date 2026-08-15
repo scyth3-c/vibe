@@ -20,7 +20,7 @@ constexpr auto VER_MAIN_THREAD =  "AN ERROR OCCURRED IN THE MAIN PROCESSING THRE
 
 template<class...P>
 auto terminal(P const&... args) {
-    ((std::cout<<"[ "<<args<<"]"<<std::endl),...);
+    ((std::cerr<<"[ "<<args<<"]"<<std::endl),...);
 }
 
 

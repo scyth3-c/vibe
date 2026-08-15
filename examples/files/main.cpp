@@ -5,6 +5,9 @@ int main() {
     Router router;
     router.setPort(8080);
 
+    // readFileX (C++ templates) is OFF by default; this example opts in.
+    router.configure({ .render = { .allow_readfilex = true } });
+
 
     // readFile with an explicit Content-Type
     router.get("/",{[&](Query &web) {
@@ -23,7 +26,7 @@ int main() {
 
     // readFileX detects text/html from cpp.html automatically. An explicit
     // type can still be supplied when the response should override the file.
-    // (turn it off with .render = { .allow_readfilex = false })
+    // (it is OFF by default; enable with .render = { .allow_readfilex = true })
     router.get("/cpp",{[&](Query &web) {
 
         web.readFileX("cpp.html");

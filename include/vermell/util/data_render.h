@@ -83,7 +83,9 @@ private:
              }
          }
 
-        return body.substr(0, open) + data + body.substr(close + 2);
+         // The value is HTML-escaped on substitution: a request-derived
+         // variable can never inject markup/scripts into the rendered page.
+        return body.substr(0, open) + vermell::srender::escape_html(data) + body.substr(close + 2);
     }
 };
 

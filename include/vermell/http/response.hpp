@@ -73,7 +73,7 @@ namespace vermell::http {
             out += "\r\n";
 
             if (!has("Server"))
-                out += "Server: Vermell/1.0\r\n";
+                out += "Server: Vermell\r\n";
 
             if (!has("Content-Type"))
                 out += "Content-Type: text/plain\r\n";

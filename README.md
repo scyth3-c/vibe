@@ -147,6 +147,11 @@ archive and executable formats.
 
 ### readFileX: C++ templates
 
+> **Security:** `readFileX` compiles and runs embedded C++ on the server, so
+> it is **disabled by default**. Enable it with
+> `router.configure({ .render = { .allow_readfilex = true } })` only when the
+> template content is trusted.
+
 A template may hold **any number** of `$ ... $` blocks. Each block runs at
 its position in the page and whatever it writes to `std::cout` is spliced
 right there; the markup in between is served byte-exact:
@@ -183,7 +188,7 @@ router.configure({
     .render = {
         .root             = "public/", // jail: no path escapes this directory
         .max_file_bytes   = 32UL * 1024 * 1024,
-        .allow_readfilex  = true,      // C++ templates ($ ... $)
+        .allow_readfilex  = true,      // C++ templates ($ ... $); OFF by default
         .compile_timeout  = std::chrono::milliseconds{15000},
         .run_timeout      = std::chrono::milliseconds{5000},
         .run_memory_bytes = 256UL * 1024 * 1024,
@@ -192,15 +197,20 @@ router.configure({
 });
 ```
 
-- All readers serve **regular files only** (no FIFOs/devices), cap the size
-  in memory, and never leak internal errors to the client.
+- All readers serve **regular files only** (no FIFOs/devices, symlinks are
+  rejected via `O_NOFOLLOW`), cap the size in memory, and never leak
+  internal errors to the client.
 - `compose()` module names (`#[name];`) are restricted to bare file names,
   so `#[../../etc/passwd];` is rejected.
-- `readFileX` compiles and executes inside a sandbox: private `mkdtemp`
-  workspace, scrubbed environment, no inherited file descriptors, rlimits
-  (CPU/memory/output/processes) and wall-clock timeouts enforced with
-  `SIGKILL`. Compiled binaries are cached (SHA-256 of the source) under a
-  private per-user directory, so steady-state requests skip `g++`.
+- **`readFileX` is OFF by default.** It compiles and executes embedded C++,
+  so it must be enabled explicitly (`.allow_readfilex = true`) only when the
+  template content is trusted. When enabled, execution is sandboxed: private
+  `mkdtemp` workspace, scrubbed environment, no inherited file descriptors,
+  rlimits (CPU/memory/output/processes/file-descriptors), wall-clock timeouts
+  enforced with `SIGKILL`, and — when the server runs as root — the template
+  is executed as the `nobody` user. Compiled binaries are cached (SHA-256 of
+  the source) under a private per-user directory, so steady-state requests
+  skip `g++`.
 - Set `.root` in production: without it there is no jail (legacy behavior).
 
 ### readFileX toolchain

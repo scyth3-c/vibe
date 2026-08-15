@@ -126,8 +126,8 @@ namespace vermell::mime {
                 {"eot",   "application/vnd.ms-fontobject"},
                 // misc
                 {"ics",   "text/calendar"},
-                {"sh",    "application/x-sh"},
-                {"php",   "application/x-httpd-php"},
+                {"sh",    "application/octet-stream"},
+                {"php",   "application/octet-stream"},
                 {"ps",    "application/postscript"},
                 {"eps",   "application/postscript"},
             };

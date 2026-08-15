@@ -36,11 +36,16 @@ namespace neosys {
         rlim_t memory_bytes    = 0; // RLIMIT_AS    (0 = unlimited)
         rlim_t file_size_bytes = 0; // RLIMIT_FSIZE (0 = unlimited)
         rlim_t max_processes   = 0; // RLIMIT_NPROC (0 = unlimited)
+        rlim_t no_files        = 0; // RLIMIT_NOFILE (0 = unlimited)
         // chdir() here inside the child: an empty private directory denies
         // the program any view of the server's working directory.
         const char* work_dir = nullptr;
         // setsid() in the child so the timeout can kill the whole group.
         bool new_session = false;
+        // When the server runs as root, setuid()/setgid() to "nobody" before
+        // execve(), so the executed program never holds root (or the server
+        // user's) privileges. No-op when the server is already unprivileged.
+        bool drop_privileges = false;
     };
 
     class process {

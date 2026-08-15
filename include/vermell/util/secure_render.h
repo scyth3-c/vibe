@@ -14,13 +14,16 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <fcntl.h>
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
 #include <system_error>
+#include <unistd.h>
 
 namespace vermell::srender {
 
@@ -47,40 +50,54 @@ namespace vermell::srender {
     // regular file (directories, FIFOs, devices, /proc entries with a
     // lied-about size are capped by the streaming read below) and anything
     // larger than max_bytes.
+    //
+    // Opens with O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC and re-checks with
+    // fstat(): a symlink planted between the jail check and the open, a FIFO
+    // or a device can never be served (the O_NONBLOCK open of a FIFO cannot
+    // block waiting for a writer, and fstat rejects anything not S_IFREG).
     [[nodiscard]] inline ReadResult read_bounded(const std::string& path, const size_t max_bytes) {
-        namespace fs = std::filesystem;
-
-        std::error_code ec;
-        if (!fs::exists(fs::path(path), ec) || ec)
+        const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+        if (fd < 0)
             return {ReadErr::NotFound, {}};
 
-        if (!fs::is_regular_file(fs::path(path), ec) || ec)
+        struct stat st{};
+        if (fstat(fd, &st) != 0) {
+            ::close(fd);
+            return {ReadErr::IoError, {}};
+        }
+        if (!S_ISREG(st.st_mode)) {
+            ::close(fd);
             return {ReadErr::Forbidden, {}};
-
-        const auto size = fs::file_size(fs::path(path), ec);
-        if (!ec && size > max_bytes)
+        }
+        if (st.st_size > static_cast<off_t>(max_bytes)) {
+            ::close(fd);
             return {ReadErr::TooLarge, {}};
-
-        std::ifstream in(path, std::ios::binary);
-        if (!in.is_open())
-            return {ReadErr::NotFound, {}};
+        }
 
         std::string out;
-        out.reserve(std::min<size_t>(max_bytes, ec ? 0 : static_cast<size_t>(size)));
+        out.reserve(static_cast<size_t>(st.st_size));
 
-        std::array<char, 16384> chunk{};
-        while (in) {
-            const size_t room = max_bytes - out.size();
-            if (room == 0) {
-                // Exactly at the cap: only a real extra byte makes it
-                // TooLarge — a file of precisely max_bytes is legal.
-                if (in.peek() != std::char_traits<char>::eof())
-                    return {ReadErr::TooLarge, {}};
-                break;
+        char chunk[16384];
+        size_t total = 0;
+        for (;;) {
+            const ssize_t n = ::read(fd, chunk, sizeof(chunk));
+            if (n < 0) {
+                if (errno == EINTR)
+                    continue;
+                ::close(fd);
+                return {ReadErr::IoError, {}};
             }
-            in.read(chunk.data(), static_cast<std::streamsize>(std::min(room, chunk.size())));
-            out.append(chunk.data(), static_cast<size_t>(in.gcount()));
+            if (n == 0)
+                break;
+            total += static_cast<size_t>(n);
+            if (total > max_bytes) { // grew past the cap while being read
+                ::close(fd);
+                return {ReadErr::TooLarge, {}};
+            }
+            out.append(chunk, static_cast<size_t>(n));
         }
+
+        ::close(fd);
         return {ReadErr::Ok, std::move(out)};
     }
 

@@ -57,7 +57,7 @@ int Engine::getPort() const {
 
 int Engine::setBuffer(int size) {
      try {
-          if (size <= 0)
+          if (size <= 0 || size > MAX_BUFFER_SIZE)
                throw std::range_error("failed to set buffer_size");
           buffer_size = std::make_shared<int>(size);
           if(*buffer_size != size) throw std::range_error("failed to set buffer_size");
@@ -73,7 +73,7 @@ int Engine::setBuffer(int size) {
 
 void Server::setSessions(int max) {
      try {
-          if (max <= 0)
+          if (max <= 0 || max > MAX_SESSIONS)
                throw std::range_error("Failed to set sessions");
           static_sessions = std::make_shared<int>(max);
           if(*static_sessions != max) throw std::range_error("Failed to set sessions");

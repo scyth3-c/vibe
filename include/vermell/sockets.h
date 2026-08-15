@@ -45,6 +45,10 @@ constexpr int VER_SOCKET_OK = 0x0;
 [[maybe_unused]] constexpr int VER_SOCKET_CONFUSED = 0x1;
 
 constexpr int DEF_BUFFER_SIZE = 0x400;
+// Upper bounds for the user-tunable socket knobs: a huge buffer or backlog
+// is a memory/DoS foot-gun, so out-of-range values are rejected.
+constexpr int MAX_BUFFER_SIZE = 16 * 1024 * 1024;
+constexpr int MAX_SESSIONS = 65535;
 constexpr int UnCATCH_ERROR_CH = -0x42;
 
 [[maybe_unused]] constexpr auto SOCK_ERR = "_ERROR";

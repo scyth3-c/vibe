@@ -33,7 +33,7 @@ int main() {
         .render = {
             .root             = "./", // jail: no rendered path escapes this directory (empty = no jail)
             .max_file_bytes   = 32UL * 1024UL * 1024UL,
-            .allow_readfilex  = true, // C++ templates compile & run code; turn off when unused
+            .allow_readfilex  = true, // C++ templates compile & run code; OFF by default, enable only when trusted
             .compile_timeout  = std::chrono::milliseconds{15000},
             .run_timeout      = std::chrono::milliseconds{5000},
             .run_memory_bytes = 256UL * 1024UL * 1024UL,

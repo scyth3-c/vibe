@@ -39,7 +39,6 @@ RUN groupadd --system --gid 1000 app \
 WORKDIR /app
 
 COPY --from=builder /src/build/vermellx /app/vermellx
-COPY --from=builder /src/tests/cpp.html /app/cpp.html
 
 USER app
 

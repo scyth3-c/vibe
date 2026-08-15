@@ -84,15 +84,17 @@ namespace vermell {
         size_t max_file_bytes = 32UL * 1024UL * 1024UL;
 
         // Master switch for readFileX: C++ templates compile and execute
-        // code, so deployments that do not need them should turn this off.
-        bool allow_readfilex = true;
+        // code on the server, so it is OFF by default. Enable it explicitly
+        // only when the template content is fully trusted.
+        bool allow_readfilex = false;
 
         // ---- readFileX sandbox ----
         std::chrono::milliseconds compile_timeout{15000}; // g++ wall clock
         std::chrono::milliseconds run_timeout{5000};      // template wall clock
         size_t run_memory_bytes   = 256UL * 1024UL * 1024UL; // RLIMIT_AS of the executed program
         size_t max_output_bytes   = 8UL * 1024UL * 1024UL;   // captured stdout cap
-        size_t compile_cache_entries = 64;                   // binaries kept per code hash
+        size_t run_no_files       = 64;                      // RLIMIT_NOFILE of the executed program
+        size_t compile_cache_entries = 64;                   // max cached binaries (0 = cache off)
 
         // Toolchain the readFileX templates are compiled with.
         CppToolchain cpp{};

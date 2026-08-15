@@ -102,6 +102,7 @@ TEST_F(TestSuite, TestReadFile) {
      const string file = "../examples/files/cpp.html";
 
      router.setPort(8080);
+     router.configure({ .render = { .allow_readfilex = true } });
      router.get("/", {[&](Query &http) {
                 http.readFileX(file, "application/html");
            }});
@@ -645,13 +646,14 @@ TEST_F(TestSuite, TestReadFileXKillsInfiniteLoop) {
      const string file = "./sec_loop.html";
      { std::ofstream out(file); out << "X$ while(true){} $Y"; }
 
-     Router router;
-     router.setPort(8092);
-     router.configure({
-         .render = {
-             .run_timeout = std::chrono::milliseconds{500},
-         },
-     });
+      Router router;
+      router.setPort(8092);
+      router.configure({
+          .render = {
+              .allow_readfilex = true,
+              .run_timeout = std::chrono::milliseconds{500},
+          },
+      });
 
      router.get("/", {[&](Query &http) {
                 http.readFileX(file, "text/html");
@@ -674,13 +676,14 @@ TEST_F(TestSuite, TestReadFileXKillsInfiniteLoop) {
 
      // Second request on a fresh router: the cached binary is reused (no
      // recompilation) and the worker pool survived the kill.
-     Router router2;
-     router2.setPort(8093);
-     router2.configure({
-         .render = {
-             .run_timeout = std::chrono::milliseconds{500},
-         },
-     });
+      Router router2;
+      router2.setPort(8093);
+      router2.configure({
+          .render = {
+              .allow_readfilex = true,
+              .run_timeout = std::chrono::milliseconds{500},
+          },
+      });
      router2.get("/", {[&](Query &http) {
                 http.readFileX(file, "text/html");
        }});
@@ -703,25 +706,27 @@ TEST_F(TestSuite, TestReadFileXCacheKeepsOutput) {
      const string file = "./sec_cached.html";
      { std::ofstream out(file); out << "A$ std::cout << \"[cached-ok]\"; $B"; }
 
-     Router router;
-     router.setPort(8094);
-     router.get("/", {[&](Query &http) {
+      Router router;
+      router.setPort(8094);
+      router.configure({ .render = { .allow_readfilex = true } });
+      router.get("/", {[&](Query &http) {
                 http.readFileX(file, "text/html");
        }});
 
-     ISOLATE(
+      ISOLATE(
           router.listenOne();
-     )
+      )
 
-     Veridic client("http://localhost:8094");
-     const string res = client.get();
-     isolate_method.get();
-     EXPECT_NE(res.find("cached-ok"), string::npos);
+      Veridic client("http://localhost:8094");
+      const string res = client.get();
+      isolate_method.get();
+      EXPECT_NE(res.find("cached-ok"), string::npos);
 
-     // Second hit must produce the exact same output from the cached binary.
-     Router router2;
-     router2.setPort(8095);
-     router2.get("/", {[&](Query &http) {
+      // Second hit must produce the exact same output from the cached binary.
+      Router router2;
+      router2.setPort(8095);
+      router2.configure({ .render = { .allow_readfilex = true } });
+      router2.get("/", {[&](Query &http) {
                 http.readFileX(file, "text/html");
        }});
 
@@ -741,9 +746,10 @@ TEST_F(TestSuite, TestReadFileXMultipleBlocks) {
      const string file = "./sec_multi.html";
      { std::ofstream out(file); out << "A$ std::cout << \"1\"; $B$\n std::cout << \"2\";\n$C"; }
 
-     Router router;
-     router.setPort(8108);
-     router.get("/", {[&](Query &http) {
+      Router router;
+      router.setPort(8108);
+      router.configure({ .render = { .allow_readfilex = true } });
+      router.get("/", {[&](Query &http) {
                 http.readFileX(file); // also exercises MIME auto-detection
        }});
 
@@ -776,9 +782,10 @@ TEST_F(TestSuite, TestReadFileXForLoopAndSecondBlock) {
          "$\n";
      }
 
-     Router router;
-     router.setPort(8109);
-     router.get("/", {[&](Query &http) {
+      Router router;
+      router.setPort(8109);
+      router.configure({ .render = { .allow_readfilex = true } });
+      router.get("/", {[&](Query &http) {
                 http.readFileX(file, "text/html");
        }});
 
@@ -832,9 +839,10 @@ TEST_F(TestSuite, TestReadFileXEscapesMarkupIntoSource) {
      const string file = "./sec_escape.html";
      { std::ofstream out(file); out << "<a title=\"x\\y\">\"q\"</a>\n$ std::cout << \"<b>ok</b>\"; $\n<div>\\done\\</div>"; }
 
-     Router router;
-     router.setPort(8111);
-     router.get("/", {[&](Query &http) {
+      Router router;
+      router.setPort(8111);
+      router.configure({ .render = { .allow_readfilex = true } });
+      router.get("/", {[&](Query &http) {
                 http.readFileX(file, "text/html");
        }});
 
@@ -1074,8 +1082,9 @@ TEST(CppToolchainUnit, StandardIsConfigurable) {
      const string file = "./tc_std.html";
      { std::ofstream out(file); out << "X$ auto f = [](auto x) requires true { return x * 2; }; std::cout << f(21); $Y"; }
 
-     vermell::RenderSecurity sec; // legacy default: c++17
-     auto [body17, status17] = CppReader::processing(file, sec);
+      vermell::RenderSecurity sec; // legacy default: c++17
+      sec.allow_readfilex = true;
+      auto [body17, status17] = CppReader::processing(file, sec);
      EXPECT_EQ(status17, "400");
 
      sec.cpp.standard = "c++20";
@@ -1090,8 +1099,9 @@ TEST(CppToolchainUnit, ExtraFlagsReachTheCompiler) {
      const string file = "./tc_flags.html";
      { std::ofstream out(file); out << "A$ std::cout << ANSWER; $B"; } // ANSWER undefined by default
 
-     vermell::RenderSecurity sec;
-     sec.cpp.compiler = "g++"; // bare names are resolved in the usual dirs
+      vermell::RenderSecurity sec;
+      sec.allow_readfilex = true;
+      sec.cpp.compiler = "g++"; // bare names are resolved in the usual dirs
      auto [plain, status_plain] = CppReader::processing(file, sec);
      EXPECT_EQ(status_plain, "400");
 
@@ -1109,8 +1119,9 @@ TEST(CppToolchainUnit, CacheSeparatesToolchains) {
      const string file = "./tc_cache.html";
      { std::ofstream out(file); out << "A$ std::cout << ANSWER; $B"; }
 
-     vermell::RenderSecurity sec;
-     sec.cpp.flags = {"-DANSWER=1"};
+      vermell::RenderSecurity sec;
+      sec.allow_readfilex = true;
+      sec.cpp.flags = {"-DANSWER=1"};
      auto [one, status_one] = CppReader::processing(file, sec);
      EXPECT_EQ(status_one, "200");
      EXPECT_EQ(one, "A1B");
@@ -1127,8 +1138,9 @@ TEST(CppToolchainUnit, BadCompilerPathFailsCleanly) {
      const string file = "./tc_bad.html";
      { std::ofstream out(file); out << "A$ std::cout << 1; $B"; }
 
-     vermell::RenderSecurity sec;
-     sec.cpp.compiler = "/no/such/g++";
+      vermell::RenderSecurity sec;
+      sec.allow_readfilex = true;
+      sec.cpp.compiler = "/no/such/g++";
      auto [body, status] = CppReader::processing(file, sec);
      EXPECT_EQ(status, "400");
      EXPECT_NE(body.find("could not be compiled"), string::npos);

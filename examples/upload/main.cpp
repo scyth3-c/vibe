@@ -34,11 +34,15 @@ int main() {
                   << "mime:     " << doc->mime     << '\n'
                   << "bytes:    " << doc->size()   << '\n';
 
-        // persist it (the target directory must exist):
-        // doc->save_to("./" + doc->filename);
+        // persist it (the target directory must exist). filename is already
+        // sanitized by the multipart parser (no path components, no ".."):
+        // doc->save_to("./uploads/" + doc->filename);
 
-        web.json(R"({"title":")" + title + R"(","file":")" + doc->filename
-               + R"(","bytes":)" + std::to_string(doc->size()) + "}");
+        web.json(vermell::Json::object({
+            {"title", title},
+            {"file", doc->filename},
+            {"bytes", static_cast<long long>(doc->size())},
+        }).dump());
     }});
 
 

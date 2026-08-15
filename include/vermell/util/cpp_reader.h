@@ -69,9 +69,6 @@ public:
 
     static std::pair<string, string> processing(const string& path,
                                                 const vermell::RenderSecurity& sec = {}) {
-        if (!sec.allow_readfilex)
-            return {"Vermell: C++ templates are disabled on this server", "403"};
-
         if (!sec.root.empty() && !vermell::srender::is_within(sec.root, path))
             return {notify::noPath(path), "403"};
 
@@ -82,10 +79,15 @@ public:
         const string raw_html = std::move(read.data);
 
         // No complete code block: serve the file verbatim instead of running
-        // with uninitialized coordinates like the legacy code did.
+        // with uninitialized coordinates like the legacy code did. A template
+        // without code carries no code-execution risk, so it is served even
+        // when readFileX is disabled.
         const auto segments = split_segments(raw_html);
         if (segments.empty())
             return {raw_html, "200"};
+
+        if (!sec.allow_readfilex)
+            return {"Vermell: C++ templates are disabled on this server", "403"};
 
         try {
             TempDir work = make_temp_dir();
@@ -110,8 +112,10 @@ public:
             run_opts.memory_bytes    = sec.run_memory_bytes;
             run_opts.file_size_bytes = sec.max_output_bytes;
             run_opts.max_processes   = 32; // no fork bombs from a template
+            run_opts.no_files        = sec.run_no_files;
             run_opts.work_dir        = work.path.c_str();
             run_opts.new_session     = true;
+            run_opts.drop_privileges = true;
 
             const std::vector<const char*> execute = {binary.c_str(), nullptr};
             if (process::run_command(execute, out_file, run_opts) == VER_NVALUE) {
@@ -255,8 +259,12 @@ private:
         string pattern = tmp_base() + "/vermell-x-XXXXXX";
         std::vector<char> buf(pattern.begin(), pattern.end());
         buf.push_back('\0');
-        if (mkdtemp(buf.data()) != nullptr) // mkdtemp creates it with mode 0700
+        if (mkdtemp(buf.data()) != nullptr) { // mkdtemp creates it with mode 0700
             dir.path = buf.data();
+            // o+x so a dropped-privilege template can traverse to its binary;
+            // no group/other read or write is ever granted.
+            chmod(dir.path.c_str(), 0711);
+        }
         return dir;
     }
 
@@ -313,19 +321,16 @@ private:
             std::error_code ec;
             std::filesystem::create_directory(candidate, ec); // ignores EEXIST
             struct stat st{};
-            if (stat(candidate.c_str(), &st) == 0
+            // lstat(): a symlink planted at the candidate path is rejected,
+            // never followed (and never chmod'ed into usability).
+            if (lstat(candidate.c_str(), &st) == 0
                 && S_ISDIR(st.st_mode)
                 && st.st_uid == getuid()
-                && (st.st_mode & 077) == 0) {
+                && chmod(candidate.c_str(), 0711) == 0) {
+                // 0711: owner full access, others may only traverse, so a
+                // dropped-privilege template can reach its cached binary.
                 dir = candidate;
                 usable = true;
-            } else if (stat(candidate.c_str(), &st) == 0 && S_ISDIR(st.st_mode)
-                       && st.st_uid == getuid()) {
-                // Existed with loose permissions: tighten instead of giving up.
-                if (chmod(candidate.c_str(), 0700) == 0) {
-                    dir = candidate;
-                    usable = true;
-                }
             }
         }
     };
@@ -395,8 +400,8 @@ private:
         }
 
         const bool cacheable = store.usable
-                               && (store.entries.size() < sec.compile_cache_entries
-                                   || sec.compile_cache_entries == 0);
+                               && sec.compile_cache_entries != 0
+                               && store.entries.size() < sec.compile_cache_entries;
         const string binary = cacheable
                                   ? work.path + "/tpl.bin"   // renamed into the cache on success
                                   : work.path + "/once.bin"; // cache full/off: ephemeral
@@ -433,6 +438,11 @@ private:
             return {};
         }
 
+        // 0755: the executing template runs as "nobody" (dropped privileges),
+        // so it must be able to execute this binary, but nobody else can
+        // modify it.
+        chmod(binary.c_str(), 0755);
+
         if (!cacheable)
             return binary;
 
@@ -450,9 +460,7 @@ private:
                 if (ec)
                     return binary; // keep the ephemeral copy, just uncached
             }
-            std::filesystem::permissions(cached_path,
-                                         std::filesystem::perms::owner_all,
-                                         ec);
+            chmod(cached_path.c_str(), 0755);
         } else {
             std::filesystem::remove(binary, ec);
         }

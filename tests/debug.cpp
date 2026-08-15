@@ -7,7 +7,7 @@ int main() {
     router.setPort(8080);
 
     router.get("/",{[](Query &http) {
-                       http.readFileX(vermell::process.pwd + "/cpp.html");
+                       http.send("Hello from Vermell");
                    }
                });
 

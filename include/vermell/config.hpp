@@ -46,6 +46,10 @@ namespace vermell {
         // Queued tasks before the dispatcher blocks (backpressure). 0 = auto:
         // max(1024, threads * 256), enough to absorb an epoll batch burst.
         size_t max_queue_size = 0;
+        // Hard cap on simultaneously open client connections. 0 = unlimited
+        // (legacy). Setting a bound is the blunt DoS wall against
+        // connection-flood / slowloris style exhaustion.
+        size_t max_connections = 0;
         std::chrono::milliseconds epoll_timeout{1000}; // listen loop wake-up period
 
         // ---- file rendering hardening (readFile / readFileX / compose / render) ----

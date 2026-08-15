@@ -23,6 +23,15 @@ namespace {
             default:                       return RequestIO::ReadStatus::Failed; // Incomplete
         }
     }
+
+    // Decrements the connection counter when a worker is done with a fd, on
+    // every exit path of HandleClient (including early returns).
+    struct ConnectionGuard {
+        std::atomic<size_t>& counter;
+        explicit ConnectionGuard(std::atomic<size_t>& c) : counter(c) {}
+        ~ConnectionGuard() { counter.fetch_sub(1); }
+    };
+
 }
 
 RequestIO::RequestIO(const shared_ptr<vector<epoll_event> > &events,
@@ -59,6 +68,7 @@ void RequestIO::Dispatch(const int notice) const {
         if (event_mask & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) {
             epoll_ctl(*epoll_fd, EPOLL_CTL_DEL, event_fd, nullptr);
             close(event_fd);
+            active_connections_.fetch_sub(1);
             continue;
         }
 
@@ -77,6 +87,7 @@ void RequestIO::Dispatch(const int notice) const {
         } catch (const std::exception &e) {
             terminal("THREAD POOL REJECTED TASK: ", e.what());
             close(event_fd);
+            active_connections_.fetch_sub(1);
         }
     }
 }
@@ -100,6 +111,15 @@ void RequestIO::AcceptPending() const {
             return;
         }
 
+        // Shedding: when the connection cap is reached, accept and close
+        // immediately so the listen backlog drains (the client sees a reset)
+        // instead of spinning the event loop with an undrained readable fd.
+        if (config_.max_connections != 0
+            && active_connections_.load() >= config_.max_connections) {
+            close(client_file_descriptor);
+            continue;
+        }
+
         if (Server::setNonblocking(client_file_descriptor) == VER_SOCKET_ERROR) {
             close(client_file_descriptor);
             continue;
@@ -112,12 +132,19 @@ void RequestIO::AcceptPending() const {
         if (epoll_ctl(*epoll_fd, EPOLL_CTL_ADD, client_file_descriptor, &client_event) == VER_NVALUE) {
             terminal(VER_EPOLL_CERR, strerror(errno));
             close(client_file_descriptor);
+            continue;
         }
+
+        active_connections_.fetch_add(1);
     }
 }
 
 
 void RequestIO::HandleClient(const int event_fd) const {
+
+    // This fd was accepted (counted) and now belongs exclusively to this
+    // worker; the guard releases the count on every exit path.
+    ConnectionGuard guard(active_connections_);
 
     string raw_request;
 
@@ -222,10 +249,14 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
                              .body(R"lit({"error":"this route is not defined"})lit")
                              .str();
 
+    bool head_only = false;
+
     try {
         const string socket_response = instance->getResponse();
 
         if (const auto message = vermell::http::Message::parse(socket_response)) {
+
+            head_only = (message->method == "HEAD");
 
             if (const auto itr = routes->find(message->path + message->method); itr != routes->end()) {
 
@@ -263,6 +294,14 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
         }
     } catch (const std::exception &e) {
         terminal("REQUEST PROCESSING ERROR: ", e.what());
+    }
+
+    // HEAD returns the exact headers a GET would produce (Content-Length
+    // included) but never a body (RFC 9110 §9.3.2).
+    if (head_only) {
+        const size_t sep = send_target.find("\r\n\r\n");
+        if (sep != string::npos)
+            send_target.resize(sep + 4);
     }
 
     instance->sendResponse(send_target);
