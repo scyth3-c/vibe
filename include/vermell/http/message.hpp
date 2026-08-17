@@ -34,11 +34,17 @@ namespace vermell::http {
         [[nodiscard]] size_t size()  const noexcept { return content.size(); }
         [[nodiscard]] bool   empty() const noexcept { return content.empty(); }
 
-        // Persists the file. Refuses absolute paths and any ".." traversal
-        // segment, so even a caller that forgets to sanitize the filename
-        // cannot write outside its chosen directory.
+        // Persists the file. Refuses absolute paths (POSIX and Windows drive
+        // letters / UNC), any ".." traversal segment and NUL bytes, so even
+        // a caller that forgets to sanitize the filename cannot write outside
+        // its chosen directory.
         bool save_to(const std::string& path) const {
             if (path.empty() || path.front() == '/' || path.front() == '\\')
+                return false;
+            // Windows drive-letter ("C:\...", "C:/...") and UNC ("\\server\...")
+            // absolute paths.
+            if (path.size() >= 2 && path[1] == ':' &&
+                ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')))
                 return false;
 
             size_t pos = 0;
@@ -48,6 +54,8 @@ namespace vermell::http {
                                                (next == std::string::npos ? path.size() : next) - pos);
                 if (segment == "..")
                     return false;
+                if (segment.find('\0') != std::string_view::npos)
+                    return false; // a NUL would silently truncate the path
                 if (next == std::string::npos)
                     break;
                 pos = next + 1;
@@ -106,7 +114,7 @@ namespace vermell::http {
 
         for (size_t i = 0; i < in.size(); ++i) {
             const char c = in[i];
-            if (c == '%' && i + 2 < in.size() + 1 && i + 2 <= in.size() - 1) {
+            if (c == '%' && i + 2 < in.size()) { // in[i+1] and in[i+2] are in bounds
                 const int hi = detail::hex_value(in[i + 1]);
                 const int lo = detail::hex_value(in[i + 2]);
                 if (hi >= 0 && lo >= 0) {
@@ -342,6 +350,21 @@ namespace vermell::http {
                                              std::string(detail::trim(line.substr(colon + 1))));
                 }
             }
+
+            // RFC 9112 §3.2/§6.2: an HTTP/1.1 (or newer) request must carry
+            // exactly one Host header. Duplicate Hosts are a smuggling /
+            // cache-desync vector in ANY version (RFC 9112 §6.2: "more than
+            // one Host header field" => 400); only the *absence* of Host is
+            // tolerated for HTTP/1.0 legacy clients.
+            size_t host_count = 0;
+            for (const auto& header : msg.headers) {
+                if (!detail::iequals(header.first, "Host"))
+                    continue;
+                if (++host_count > 1)
+                    return std::nullopt;
+            }
+            if (host_count == 0 && !version_view.starts_with("HTTP/1.0"))
+                return std::nullopt;
 
             // ---- body: exactly Content-Length bytes, or none ----
             msg.content_length_ = scan.content_length;

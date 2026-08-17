@@ -120,12 +120,17 @@ int Server::on() {
              throw std::range_error("Failed to set socket options");
          }
 
-         // Best effort: allows several sockets on the same port when available.
-         setsockopt(*socket_id,
-                    SOL_SOCKET,
-                    SO_REUSEPORT,
-                    &*option_mame,
-                    sizeof(*option_mame));
+         // SO_REUSEPORT is strictly opt-in (Config::reuse_port): with it on,
+         // any same-UID process may bind this port and intercept a share of
+         // the traffic. Off by default.
+         if (reuse_port_
+             && setsockopt(*socket_id,
+                           SOL_SOCKET,
+                           SO_REUSEPORT,
+                           &*option_mame,
+                           sizeof(*option_mame)) != 0x0) {
+             throw std::range_error("Failed to set socket options");
+         }
 
          if(setNonblocking(*socket_id) == VER_SOCKET_ERROR)
              throw std::runtime_error("Failed to set nonblocking");

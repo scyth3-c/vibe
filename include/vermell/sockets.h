@@ -25,6 +25,8 @@
 #include <charconv>
 #include <chrono>
 #include <string_view>
+#include <algorithm>
+#include <limits>
 
 #include "http/response.hpp"
 
@@ -102,6 +104,10 @@ class Server final : public Engine {
 
      int write_timeout_ms = 5000;
 
+     // SO_REUSEPORT is opt-in (Config::reuse_port): when off, no other
+     // same-UID process can bind the same port and intercept traffic.
+     bool reuse_port_ = false;
+
      std::vector<epoll_event> events;
 
   public:
@@ -122,8 +128,13 @@ class Server final : public Engine {
      void setSessions(int);
      // Inactivity timeout while writing the response to the client.
      inline void setWriteTimeout(const std::chrono::milliseconds timeout) noexcept {
-          write_timeout_ms = static_cast<int>(timeout.count());
+          // poll() takes an int timeout: clamp so an absurd config cannot
+          // overflow the conversion (negative = wait forever = slow-client DoS).
+          write_timeout_ms = std::clamp(static_cast<long long>(timeout.count()),
+                                        1LL,
+                                        static_cast<long long>(std::numeric_limits<int>::max()));
      }
+     inline void setReusePort(const bool enable) noexcept { reuse_port_ = enable; }
      void sendResponse(const string&) const;
      void setResponse(const std::array<char, DEF_BUFFER_SIZE> &buffer);
      void setResponse(const string &data);

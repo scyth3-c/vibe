@@ -9,6 +9,7 @@
 #include "util/process.h"
 #include "util/environment.h"
 #include <chrono>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -67,6 +68,9 @@ public:
     Vermell& setMaxConnections(size_t max_connections) noexcept;
     Vermell& setBacklog(int backlog) noexcept;
     Vermell& setBufferSize(int size) noexcept;
+    // SO_REUSEPORT is off by default; enable it only for deliberate
+    // multi-instance setups (see Config::reuse_port).
+    Vermell& setReusePort(bool reuse_port) noexcept;
 
     // Toolchain used to compile readFileX templates:
     //   router.setCppToolchain({ .compiler = "g++-12", .standard = "c++20" });
@@ -102,7 +106,7 @@ int Vermell<T>::http_response(const string &endpoint, MiddlewareList middlewareL
         if (routes == nullptr)
             routes = make_shared<RoutesMap>();
 
-        routes->operator[](endpoint + type) = make_unique<listen_routes>( endpoint, std::move(middlewareList), type);
+        routes->operator[](route_key(endpoint, type)) = make_unique<listen_routes>( endpoint, std::move(middlewareList), type);
     }
     catch (const std::exception &e) {
         std::cerr << e.what() << '\n';
@@ -192,19 +196,56 @@ Vermell<T>& Vermell<T>::configure(const vermell::Config& config) noexcept {
     config_ = config;
     if (config_.port < static_cast<uint16_t>(neo::MIN_PORT))
         config_.port = previous_port;
+
+    // Bounds for the user-tunable knobs: absurd values are a memory/DoS
+    // foot-gun (a per-connection recv() buffer of read_chunk bytes, an
+    // epoll event array of max_events entries, a poll() timeout that
+    // overflows the int conversion and waits forever).
+    // `static` so the lambda below may reference them without captures
+    // (portable across GCC/Clang/MSVC).
+    static constexpr size_t MAX_READ_CHUNK = 1UL << 20; // 1 MiB per recv() call
+    static constexpr int    MAX_EVENTS     = 65536;
+    static constexpr size_t MAX_THREADS    = 256;
+    static constexpr long long MIN_TIMEOUT_MS = 1;
+    static constexpr long long MAX_TIMEOUT_MS = std::numeric_limits<int>::max();
+
+    if (config_.read_chunk == 0 || config_.read_chunk > MAX_READ_CHUNK)
+        config_.read_chunk = MAX_READ_CHUNK;
+    if (config_.max_events <= 0 || config_.max_events > MAX_EVENTS)
+        config_.max_events = MAX_EVENTS;
+    if (config_.threads > MAX_THREADS)
+        config_.threads = MAX_THREADS;
+    if (config_.backlog <= 0 || config_.backlog > MAX_SESSIONS)
+        config_.backlog = MAX_SESSIONS;
+
+    const auto clamp_ms = [](const std::chrono::milliseconds t) {
+        const long long ms = t.count();
+        return std::chrono::milliseconds(ms < MIN_TIMEOUT_MS ? MIN_TIMEOUT_MS
+                                    : ms > MAX_TIMEOUT_MS ? MAX_TIMEOUT_MS : ms);
+    };
+    config_.read_timeout  = clamp_ms(config_.read_timeout);
+    config_.write_timeout = clamp_ms(config_.write_timeout);
+    config_.epoll_timeout = clamp_ms(config_.epoll_timeout);
+
     applyNetworkConfig();
     return *this;
 }
 
 template <class T>
 Vermell<T>& Vermell<T>::setReadTimeout(const std::chrono::milliseconds timeout) noexcept {
-    config_.read_timeout = timeout;
+    // poll() takes an int: clamp so a 0/negative value cannot mean
+    // "wait forever" (slow-client DoS) and a huge one cannot overflow.
+    const long long ms = timeout.count();
+    config_.read_timeout = std::chrono::milliseconds(
+        ms < 1 ? 1 : (ms > std::numeric_limits<int>::max() ? std::numeric_limits<int>::max() : ms));
     return *this;
 }
 
 template <class T>
 Vermell<T>& Vermell<T>::setWriteTimeout(const std::chrono::milliseconds timeout) noexcept {
-    config_.write_timeout = timeout;
+    const long long ms = timeout.count();
+    config_.write_timeout = std::chrono::milliseconds(
+        ms < 1 ? 1 : (ms > std::numeric_limits<int>::max() ? std::numeric_limits<int>::max() : ms));
     return *this;
 }
 
@@ -216,19 +257,20 @@ Vermell<T>& Vermell<T>::setMaxRequestSize(const size_t bytes) noexcept {
 
 template <class T>
 Vermell<T>& Vermell<T>::setReadChunkSize(const size_t bytes) noexcept {
-    config_.read_chunk = bytes == 0 ? 1 : bytes;
+    // 1..1 MiB: a larger per-recv() buffer is a per-connection memory bomb.
+    config_.read_chunk = (bytes == 0 || bytes > (1UL << 20)) ? (1UL << 20) : bytes;
     return *this;
 }
 
 template <class T>
 Vermell<T>& Vermell<T>::setThreads(const size_t threads) noexcept {
-    config_.threads = threads;
+    config_.threads = threads > 256 ? 256 : threads;
     return *this;
 }
 
 template <class T>
 Vermell<T>& Vermell<T>::setMaxEvents(const int max_events) noexcept {
-    config_.max_events = max_events;
+    config_.max_events = (max_events <= 0 || max_events > 65536) ? 65536 : max_events;
     return *this;
 }
 
@@ -246,9 +288,9 @@ Vermell<T>& Vermell<T>::setMaxConnections(const size_t max_connections) noexcept
 
 template <class T>
 Vermell<T>& Vermell<T>::setBacklog(const int backlog) noexcept {
-    config_.backlog = backlog;
+    config_.backlog = (backlog <= 0 || backlog > MAX_SESSIONS) ? MAX_SESSIONS : backlog;
     if (tcpControl != nullptr)
-        tcpControl->setSessions(backlog);
+        tcpControl->setSessions(config_.backlog);
     return *this;
 }
 
@@ -257,6 +299,14 @@ Vermell<T>& Vermell<T>::setBufferSize(const int size) noexcept {
     config_.buffer_size = size;
     if (tcpControl != nullptr)
         tcpControl->setBuffer(size);
+    return *this;
+}
+
+template <class T>
+Vermell<T>& Vermell<T>::setReusePort(const bool reuse_port) noexcept {
+    config_.reuse_port = reuse_port;
+    if (tcpControl != nullptr)
+        tcpControl->setReusePort(reuse_port);
     return *this;
 }
 
@@ -275,6 +325,7 @@ void Vermell<T>::applyNetworkConfig() noexcept {
     tcpControl->setBuffer(config_.buffer_size);
     tcpControl->setPort(config_.port >= min_port ? config_.port : default_port);
     tcpControl->setSessions(config_.backlog);
+    tcpControl->setReusePort(config_.reuse_port);
 }
 
 

@@ -14,12 +14,9 @@ int main() {
 
         auto params = web.body.getParameters();
         if(params.get("code").value == unscoped_info) {
-
-            // return end the flow
            return web.json(unscoped_info,[&](){
                 unscoped_info = "other value";
             });
-
         }
             web.json("error", 400, [&](){
                 unscoped_info = "error";

@@ -438,9 +438,11 @@ private:
             return {};
         }
 
-        // 0755: the executing template runs as "nobody" (dropped privileges),
-        // so it must be able to execute this binary, but nobody else can
-        // modify it.
+        // 0755: the executing template runs as "nobody" (dropped privileges)
+        // when the server is root. A dynamically-linked ELF requires READ
+        // access for ld.so even with execute permission, so the binary must
+        // stay world-readable; only the sandbox (rlimits, timeouts, private
+        // 0711 workspace, scrubbed environment) protects its execution.
         chmod(binary.c_str(), 0755);
 
         if (!cacheable)

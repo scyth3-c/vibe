@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <mutex>
 
 namespace {
@@ -218,7 +219,12 @@ RequestIO::ReadStatus RequestIO::ReadRequest(const int event_fd, string &out) co
             pfd.fd = event_fd;
             pfd.events = POLLIN;
 
-            const int ready = poll(&pfd, 1, static_cast<int>(config_.read_timeout.count()));
+            // poll() takes an int: clamp so a misconfigured timeout can
+            // neither wait forever (slow-client DoS) nor overflow.
+            const auto timeout_ms = std::clamp(config_.read_timeout.count(),
+                                               std::chrono::milliseconds::rep{1},
+                                               static_cast<std::chrono::milliseconds::rep>(std::numeric_limits<int>::max()));
+            const int ready = poll(&pfd, 1, static_cast<int>(timeout_ms));
 
             if (ready > 0 && (pfd.revents & (POLLIN | POLLHUP)))
                 continue;
@@ -258,7 +264,7 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
 
             head_only = (message->method == "HEAD");
 
-            if (const auto itr = routes->find(message->path + message->method); itr != routes->end()) {
+            if (const auto itr = routes->find(route_key(message->path, message->method)); itr != routes->end()) {
 
                 bool guarded;
                 {

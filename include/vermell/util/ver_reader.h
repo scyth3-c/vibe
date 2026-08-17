@@ -50,6 +50,13 @@ public:
                         return {body, "200"};
                     case Tag::Ok:
                         body = std::move(out);
+                        // A module that (transitively) includes itself would
+                        // otherwise grow the page by up to max_file_bytes per
+                        // pass, MAX_PASSES times: a memory-exhaustion DoS.
+                        // Cap the composed result at the same limit the
+                        // readers enforce for a single file.
+                        if (body.size() > sec.max_file_bytes)
+                            return {"Vermell: the composed page exceeds the allowed size", "413"};
                         continue;
                     case Tag::Unclosed:
                         return {notify_html::noSafe(), "400"};

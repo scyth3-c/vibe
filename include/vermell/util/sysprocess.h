@@ -1,8 +1,3 @@
-//
-// Created by scythe on 5/07/23.
-//
-// procesos del sistema
-
 #ifndef VERMELL_SYSPROCESS_H
 #define VERMELL_SYSPROCESS_H
 
@@ -24,6 +19,11 @@
 #include <array>
 
 namespace neosys {
+
+    // Output sink when run_command() is called without an explicit file:
+    // the legacy default was the PATH environment string, which would
+    // create a file literally named "PATH=/usr/local/sbin:..." in the CWD.
+    inline constexpr const char* DEFAULT_OUTPUT = "/dev/null";
 
     // Sandboxing knobs for run_command(). All limits are applied in the
     // child right before execve(); the defaults reproduce the legacy
@@ -54,14 +54,12 @@ namespace neosys {
     public:
         [[maybe_unused]] static inline void _wait(int milliseconds)  { std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds)); }
         [[maybe_unused]] static int run_command(const std::vector<const char*> &args,
-                                                const std::string& _path = path,
+                                                const std::string& _path = DEFAULT_OUTPUT,
                                                 const RunOptions& opts = {});
         [[maybe_unused]] static std::mt19937& get_rng();
         [[maybe_unused]] static unsigned long random();
         [[maybe_unused]] static std::string readFile(const std::string &path, char separator = '\0');
         [[maybe_unused]] static int writeFile(const std::string &path, const std::string &content);
-
-        /* system process here */
     };
 
 }

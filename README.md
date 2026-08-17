@@ -98,6 +98,9 @@ Every knob of the request/response pipeline lives in `vermell::Config`
 router.configure({
     // network
     .backlog           = SOMAXCONN, // pending connections queue of listen()
+    .reuse_port        = false,     // SO_REUSEPORT: OFF by default (a same-UID
+                                    // process could otherwise bind the port and
+                                    // intercept a share of the traffic)
 
     // request reading
     .read_timeout      = std::chrono::seconds{30}, // inactivity between chunks
@@ -113,6 +116,13 @@ router.configure({
 });
 ```
 
+> **Hardening defaults:** `read_chunk` is clamped to `[1, 1 MiB]`, `max_events` to
+> `[1, 65536]`, `threads` to `[0, 256]` and every timeout to `[1ms, INT_MAX ms]`
+> — absurd values are a memory/DoS foot-gun, not a feature. Requests to
+> HTTP/1.1 (or newer) without exactly one `Host` header are rejected with 400
+> (RFC 9112 §3.2, proxy desync / request-smuggling vector); HTTP/1.0 legacy
+> clients keep working.
+
 Or use the chainable setters:
 
 ```cpp
@@ -120,7 +130,7 @@ router.setThreads(4)
       .setMaxRequestSize(16UL * 1024UL * 1024UL)
       .setReadTimeout(std::chrono::seconds{30});
 // setWriteTimeout, setReadChunkSize, setMaxEvents,
-// setMaxQueueSize, setBacklog, setBufferSize, setPort
+// setMaxQueueSize, setBacklog, setBufferSize, setPort, setReusePort
 ```
 
 The active configuration is readable at runtime with `router.config()`.
@@ -201,16 +211,19 @@ router.configure({
   rejected via `O_NOFOLLOW`), cap the size in memory, and never leak
   internal errors to the client.
 - `compose()` module names (`#[name];`) are restricted to bare file names,
-  so `#[../../etc/passwd];` is rejected.
+  so `#[../../etc/passwd];` is rejected, and the composed page is capped at
+  `max_file_bytes` per pass — a module that (transitively) includes itself
+  answers 413 instead of exhausting memory.
 - **`readFileX` is OFF by default.** It compiles and executes embedded C++,
   so it must be enabled explicitly (`.allow_readfilex = true`) only when the
   template content is trusted. When enabled, execution is sandboxed: private
-  `mkdtemp` workspace, scrubbed environment, no inherited file descriptors,
-  rlimits (CPU/memory/output/processes/file-descriptors), wall-clock timeouts
-  enforced with `SIGKILL`, and — when the server runs as root — the template
-  is executed as the `nobody` user. Compiled binaries are cached (SHA-256 of
-  the source) under a private per-user directory, so steady-state requests
-  skip `g++`.
+  `mkdtemp` workspace (0700/0711), scrubbed environment, no inherited file
+  descriptors, rlimits (CPU/memory/output/processes/file-descriptors),
+  wall-clock timeouts enforced with `SIGKILL`, and — when the server runs as
+  root — the template is executed as the `nobody` user. Compiled binaries are
+  cached (SHA-256 of the source) under a private per-user directory, so
+  steady-state requests skip `g++` (the binary is 0755: a dynamically-linked
+  ELF needs read access for `ld.so` even with execute permission).
 - Set `.root` in production: without it there is no jail (legacy behavior).
 
 ### readFileX toolchain

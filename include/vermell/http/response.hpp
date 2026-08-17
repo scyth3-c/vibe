@@ -94,6 +94,12 @@ namespace vermell::http {
             if (!has("Accept-Ranges"))
                 out += "Accept-Ranges: bytes\r\n";
 
+            // Browsers must not sniff the MIME type of the body: a served
+            // user-controlled file can otherwise be interpreted as HTML and
+            // become stored XSS. Always safe to send.
+            if (!has("X-Content-Type-Options"))
+                out += "X-Content-Type-Options: nosniff\r\n";
+
             if (!has("Connection"))
                 out += "Connection: close\r\n";
 

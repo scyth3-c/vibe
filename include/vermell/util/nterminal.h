@@ -1,6 +1,3 @@
-//
-// Created by scythe on 6/4/24.
-//
 #ifndef NTERMINAL_H
 #define NTERMINAL_H
 #include <iostream>

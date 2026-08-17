@@ -1,7 +1,3 @@
-//
-// Created by scythe on 5/07/23.
-//
-
 #ifndef MAIN_PROCESS_H
 #define MAIN_PROCESS_H
 
@@ -10,6 +6,8 @@
 #include <atomic>
 #include <cerrno>
 #include <cstring>
+#include <algorithm>
+#include <limits>
 #include <sys/epoll.h>
 #include <unistd.h>
 #include <unordered_map>
@@ -118,7 +116,13 @@ using enums::neo;
                 }
                 request_t = make_shared<RequestIO>(events, _routes, file_descriptor, epoll_fd, connection, config);
 
-                const auto wait_timeout = static_cast<int>(config.epoll_timeout.count());
+                // epoll_wait takes an int timeout: clamp so a misconfigured
+                // value cannot overflow the conversion (negative would mean
+                // "wait forever" and stall the stop/status loop).
+                const auto epoll_timeout_ms = std::clamp(config.epoll_timeout.count(),
+                                                         std::chrono::milliseconds::rep{1},
+                                                         static_cast<std::chrono::milliseconds::rep>(std::numeric_limits<int>::max()));
+                const auto wait_timeout = static_cast<int>(epoll_timeout_ms);
 
                 try {
                     if (_listen_type == neo::WHILE) {

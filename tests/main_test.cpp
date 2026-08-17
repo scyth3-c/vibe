@@ -17,6 +17,10 @@
 
      Router router;
      router.setPort(8080);
+     // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+     // connection from landing on a still-shutting-down neighbor. Real
+     // deployments should leave reuse_port OFF (Config::reuse_port).
+     router.setReusePort(true);
      router.get("/", {[&](Query &http) {
                http.send(expected_default);
        }});
@@ -37,6 +41,10 @@
 
       Router router;
       router.setPort(8080);
+     // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+     // connection from landing on a still-shutting-down neighbor. Real
+     // deployments should leave reuse_port OFF (Config::reuse_port).
+     router.setReusePort(true);
 
       ISOLATE(
            router.post("/", {[&](Query &http) {
@@ -58,6 +66,10 @@
 
      Router router;
      router.setPort(8080);
+     // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+     // connection from landing on a still-shutting-down neighbor. Real
+     // deployments should leave reuse_port OFF (Config::reuse_port).
+     router.setReusePort(true);
      const string file = "../examples/file-template/index.html";
 
      ISOLATE(
@@ -80,6 +92,10 @@ TEST_F(TestSuite, TestReadFile) {
 
     Router router;
     router.setPort(8080);
+    // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+    // connection from landing on a still-shutting-down neighbor. Real
+    // deployments should leave reuse_port OFF (Config::reuse_port).
+    router.setReusePort(true);
     const string file = "../examples/files/test.json";
 
     ISOLATE(
@@ -102,7 +118,11 @@ TEST_F(TestSuite, TestReadFile) {
      const string file = "../examples/files/cpp.html";
 
      router.setPort(8080);
-     router.configure({ .render = { .allow_readfilex = true } });
+     // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+     // connection from landing on a still-shutting-down neighbor. Real
+     // deployments should leave reuse_port OFF (Config::reuse_port).
+     router.setReusePort(true);
+     router.configure({ .reuse_port = true, .render = { .allow_readfilex = true } });
      router.get("/", {[&](Query &http) {
                 http.readFileX(file, "application/html");
            }});
@@ -131,6 +151,10 @@ TEST_F(TestSuite, TestReadFile) {
 
      Router router;
      router.setPort(8080);
+     // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+     // connection from landing on a still-shutting-down neighbor. Real
+     // deployments should leave reuse_port OFF (Config::reuse_port).
+     router.setReusePort(true);
      const string file = "../examples/files/cpp.html";
 
      router.get("/", {[&](Query &http) {
@@ -164,6 +188,10 @@ TEST_F(TestSuite, TestReadFile) {
 
      Router router;
      router.setPort(8080);
+     // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+     // connection from landing on a still-shutting-down neighbor. Real
+     // deployments should leave reuse_port OFF (Config::reuse_port).
+     router.setReusePort(true);
 
      router.post("/", {
 
@@ -190,6 +218,10 @@ TEST_F(TestSuite, TestParametersQuery) {
 
      Router router;
      router.setPort(8080);
+     // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+     // connection from landing on a still-shutting-down neighbor. Real
+     // deployments should leave reuse_port OFF (Config::reuse_port).
+     router.setReusePort(true);
 
      router.get("/",{[&](Query &web) {
 
@@ -221,6 +253,10 @@ TEST_F(TestSuite, TestParametersPost) {
 
      Router router;
      router.setPort(8080);
+     // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+     // connection from landing on a still-shutting-down neighbor. Real
+     // deployments should leave reuse_port OFF (Config::reuse_port).
+     router.setReusePort(true);
 
      router.post("/",{[&](Query &web) {
 
@@ -255,6 +291,10 @@ TEST_F(TestSuite, TestQueryDecoding) {
 
      Router router;
      router.setPort(8080);
+     // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+     // connection from landing on a still-shutting-down neighbor. Real
+     // deployments should leave reuse_port OFF (Config::reuse_port).
+     router.setReusePort(true);
 
      router.get("/",{[&](Query &web) {
        auto params = web.body.getParameters();
@@ -275,6 +315,10 @@ TEST_F(TestSuite, TestTypedParameter) {
 
      Router router;
      router.setPort(8080);
+     // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+     // connection from landing on a still-shutting-down neighbor. Real
+     // deployments should leave reuse_port OFF (Config::reuse_port).
+     router.setReusePort(true);
 
      router.get("/",{[&](Query &web) {
        auto params = web.body.getParameters();
@@ -295,6 +339,10 @@ TEST_F(TestSuite, TestJsonBody) {
 
      Router router;
      router.setPort(8080);
+     // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+     // connection from landing on a still-shutting-down neighbor. Real
+     // deployments should leave reuse_port OFF (Config::reuse_port).
+     router.setReusePort(true);
 
      router.post("/",{[&](Query &web) {
        const string legacy_data = web.body.getParameters().get("data").value;
@@ -319,6 +367,10 @@ TEST_F(TestSuite, TestMultipartForm) {
 
      Router router;
      router.setPort(8080);
+     // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+     // connection from landing on a still-shutting-down neighbor. Real
+     // deployments should leave reuse_port OFF (Config::reuse_port).
+     router.setReusePort(true);
 
      router.post("/",{[&](Query &web) {
        auto params = web.body.getParameters();
@@ -420,11 +472,16 @@ TEST_F(TestSuite, TestConfigPayloadTooLarge) {
 
      Router router;
      router.setPort(8080);
+     // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+     // connection from landing on a still-shutting-down neighbor. Real
+     // deployments should leave reuse_port OFF (Config::reuse_port).
+     router.setReusePort(true);
 
      // Any complete HTTP request is bigger than this: reject with 413.
      router.configure({
          .read_timeout     = std::chrono::seconds{2},
          .max_request_size = 16,
+         .reuse_port       = true,
      });
 
      router.get("/", {[&](Query &http) {
@@ -446,6 +503,10 @@ TEST_F(TestSuite, TestConfigureKeepsFlow) {
 
      Router router;
      router.setPort(8080);
+     // The suite shares port 8080 between tests: SO_REUSEPORT keeps a fresh
+     // connection from landing on a still-shutting-down neighbor. Real
+     // deployments should leave reuse_port OFF (Config::reuse_port).
+     router.setReusePort(true);
 
      router.configure({
          .read_timeout     = std::chrono::seconds{10},
@@ -455,6 +516,7 @@ TEST_F(TestSuite, TestConfigureKeepsFlow) {
          .threads          = 2,
          .max_events       = 256,
          .max_queue_size   = 64,
+         .reuse_port       = true,
      });
 
      router.get("/", {[&](Query &http) {
@@ -1216,7 +1278,7 @@ TEST(ParserHardeningUnit, HeaderFloodIsRejected) {
 }
 
 TEST(ParserHardeningUnit, ParseAcceptsOnlyStrictRequestLines) {
-     EXPECT_TRUE(Msg::parse("GET / HTTP/1.1\r\n\r\n").has_value());
+     EXPECT_TRUE(Msg::parse("GET / HTTP/1.1\r\nHost: x\r\n\r\n").has_value());
      EXPECT_TRUE(Msg::parse("GET /a/b?x=1 HTTP/1.0\nHost: h\n\n").has_value()); // legacy \n\n head
 
      EXPECT_FALSE(Msg::parse("").has_value());
@@ -1228,10 +1290,24 @@ TEST(ParserHardeningUnit, ParseAcceptsOnlyStrictRequestLines) {
      EXPECT_FALSE(Msg::parse(string("G\x01""T / HTTP/1.1\r\n\r\n", 20)).has_value()); // control char in method
 }
 
+TEST(ParserHardeningUnit, HostIsRequiredAndUniqueForHttp11) {
+     // RFC 9112 §3.2: HTTP/1.1 without Host, or with more than one Host, is
+     // a 400 (proxy desync / request-smuggling vector).
+     EXPECT_FALSE(Msg::parse("GET / HTTP/1.1\r\n\r\n").has_value());                       // missing Host
+     EXPECT_FALSE(Msg::parse("GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n").has_value()); // duplicated Host
+     EXPECT_FALSE(Msg::parse("GET / HTTP/1.1\r\nhost: a\r\nHOST: b\r\n\r\n").has_value()); // case-insensitive dup
+     EXPECT_TRUE (Msg::parse("GET / HTTP/1.1\r\nHost: a\r\n\r\n").has_value());
+
+     // HTTP/1.0 predates the Host requirement: still accepted without it,
+     // but duplicate Hosts stay a smuggling vector in any version.
+     EXPECT_TRUE (Msg::parse("GET / HTTP/1.0\r\n\r\n").has_value());
+     EXPECT_FALSE(Msg::parse("GET / HTTP/1.0\r\nHost: a\r\nHost: b\r\n\r\n").has_value());
+}
+
 TEST(ParserHardeningUnit, MalformedHeaderLinesAreRejected) {
      EXPECT_FALSE(Msg::parse("GET / HTTP/1.1\r\nNoColonHere\r\n\r\n").has_value());
      EXPECT_FALSE(Msg::parse("GET / HTTP/1.1\r\nBad Name: x\r\n\r\n").has_value()); // space in the name
-     EXPECT_TRUE (Msg::parse("GET / HTTP/1.1\r\nGood-Name: x\r\n\r\n").has_value());
+     EXPECT_TRUE (Msg::parse("GET / HTTP/1.1\r\nHost: x\r\nGood-Name: x\r\n\r\n").has_value());
 }
 
 TEST(ParserHardeningUnit, ObsFoldedHeadersAreRejected) {
@@ -1429,5 +1505,123 @@ TEST_F(TestSuite, TestGarbageAfterHeadIsNotBody) {
      isolate_method.get();
 
      EXPECT_TRUE(res.ends_with("empty"));
+}
+
+// ---------------------------------------------------------------------------
+// Security regressions (hardening audit)
+// ---------------------------------------------------------------------------
+
+TEST(SecurityRegression, RouteKeySeparatesPathAndMethod) {
+     // The legacy key was "path+method": "/x" with GET and "/xG" with "ET"
+     // both mapped to "/xGET", so one route silently shadowed the other.
+     EXPECT_NE(route_key("/x", "GET"), route_key("/xG", "ET"));
+     EXPECT_NE(route_key("/a", "POST"), route_key("/aPOST", ""));
+     EXPECT_EQ(route_key("/x", "GET"), route_key("/x", "GET"));
+
+     const string key = route_key("/x", "GET");
+     EXPECT_EQ(key.find('\x1f'), 2UL);               // separator sits between
+     EXPECT_EQ(key.find('\x1f', 3), string::npos);   // ...and nowhere else
+}
+
+TEST(SecurityRegression, ComposeSelfIncludingModuleIsBounded) {
+     // A module that includes itself used to grow the page by up to
+     // max_file_bytes per pass, MAX_PASSES times: a memory-exhaustion DoS.
+     const string dir = "./sec_self_inc";
+     std::filesystem::create_directory(dir);
+     {
+         std::ofstream out(dir + "/a.html");
+         out << string(700, 'A') << "#[a.html];" << string(700, 'B');
+     }
+
+     vermell::RenderSecurity sec;
+     sec.max_file_bytes = 4096;
+     auto [data, status] = VerReader::processing(dir + "/a.html", 64, sec);
+     EXPECT_EQ(status, "413");
+     EXPECT_LE(data.size(), 4096UL);
+
+     std::filesystem::remove_all(dir);
+}
+
+TEST(SecurityRegression, ConfigKnobsAreClamped) {
+     Router router;
+     router.configure({
+         .read_timeout = std::chrono::hours{24},
+         .read_chunk   = 4096UL * 1024UL * 1024UL, // 4 GiB: clamps to 1 MiB
+         .threads      = 100000,
+         .max_events   = 1 << 30,
+     });
+     EXPECT_GE(router.config().read_chunk, 1UL);
+     EXPECT_LE(router.config().read_chunk, 1UL << 20);
+     EXPECT_LE(router.config().max_events, 65536);
+     EXPECT_LE(router.config().threads, 256UL);
+     EXPECT_GE(router.config().read_timeout.count(), 1);
+     EXPECT_LE(router.config().read_timeout.count(), std::numeric_limits<int>::max());
+
+     router.setReadChunkSize(0).setMaxEvents(-5).setThreads(999999);
+     EXPECT_GE(router.config().read_chunk, 1UL);
+     EXPECT_LE(router.config().read_chunk, 1UL << 20);
+     EXPECT_LE(router.config().max_events, 65536);
+     EXPECT_LE(router.config().threads, 256UL);
+
+     // SO_REUSEPORT is OFF by default (port hijack by same-UID processes).
+     EXPECT_FALSE(router.config().reuse_port);
+}
+
+TEST(SecurityRegression, UploadedFileSaveToRejectsAbsolutePaths) {
+     vermell::http::UploadedFile f;
+     f.field = "x"; f.filename = "f.txt"; f.content = "DATA";
+
+     EXPECT_FALSE(f.save_to("/etc/passwd"));         // POSIX absolute
+     EXPECT_FALSE(f.save_to("\\server\\share\\f"));  // UNC absolute
+     EXPECT_FALSE(f.save_to("C:\\windows\\f.txt"));  // Windows drive
+     EXPECT_FALSE(f.save_to("c:/windows/f.txt"));    // Windows drive, '/'
+     EXPECT_FALSE(f.save_to("uploads/../evil"));     // traversal
+     EXPECT_FALSE(f.save_to(std::string("a\0b", 3))); // NUL byte truncation
+     EXPECT_FALSE(f.save_to(""));                    // empty
+     EXPECT_TRUE(f.save_to("./sec_save_ok.bin"));    // relative stays allowed
+     std::filesystem::remove("./sec_save_ok.bin");
+}
+
+TEST(SecurityRegression, UrlDecodeHandlesMalformedEscapes) {
+     EXPECT_EQ(vermell::http::url_decode("a%20b"), "a b");
+     EXPECT_EQ(vermell::http::url_decode("%"), "%");      // lone escape
+     EXPECT_EQ(vermell::http::url_decode("%2"), "%2");    // truncated escape
+     EXPECT_EQ(vermell::http::url_decode("%zz"), "%zz");  // non-hex digits
+     EXPECT_EQ(vermell::http::url_decode("a+b"), "a b");
+     EXPECT_EQ(vermell::http::url_decode("%2F%2e%2e"), "/..");
+     EXPECT_EQ(vermell::http::url_decode(""), "");
+}
+
+TEST(SecurityRegression, HttpQueryTrimKeepsInnerWhitespace) {
+     EXPECT_EQ(HTTP_QUERY::trim("  text/html  "), "text/html");
+     EXPECT_EQ(HTTP_QUERY::trim("text/ html"), "text/ html"); // inner space survives
+     EXPECT_EQ(HTTP_QUERY::trim("   "), "");
+     EXPECT_EQ(HTTP_QUERY::trim(""), "");
+}
+
+TEST_F(TestSuite, TestMissingHostRejectedOverHttp) {
+     Router router;
+     router.setPort(8112);
+     router.setReusePort(true);
+     router.get("/", {[&](Query &http) { http.send("unreachable"); }});
+
+     ISOLATE( router.listenOne(); )
+     const string res = raw_exchange(8112, "GET / HTTP/1.1\r\n\r\n");
+     isolate_method.get();
+
+     EXPECT_NE(res.find("HTTP/1.1 400 Bad Request"), string::npos);
+}
+
+TEST_F(TestSuite, TestDuplicateHostRejectedOverHttp) {
+     Router router;
+     router.setPort(8113);
+     router.setReusePort(true);
+     router.get("/", {[&](Query &http) { http.send("unreachable"); }});
+
+     ISOLATE( router.listenOne(); )
+     const string res = raw_exchange(8113, "GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n");
+     isolate_method.get();
+
+     EXPECT_NE(res.find("HTTP/1.1 400 Bad Request"), string::npos);
 }
 

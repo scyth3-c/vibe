@@ -1,7 +1,3 @@
-//
-// Created by owl on 19/08/24.
-//
-
 #ifndef IO_H
 #define IO_H
 

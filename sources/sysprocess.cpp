@@ -1,7 +1,3 @@
-//
-// Created by owl on 30/07/24.
-//
-
 #include "../include/vermell/util/sysprocess.h"
 #include <algorithm>
 #include <iostream>

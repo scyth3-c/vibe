@@ -50,6 +50,12 @@ namespace vermell {
         // (legacy). Setting a bound is the blunt DoS wall against
         // connection-flood / slowloris style exhaustion.
         size_t max_connections = 0;
+        // Share the listening port with other same-UID processes via
+        // SO_REUSEPORT. OFF by default: when enabled, any process running as
+        // the same user can bind the same port and receive a share of the
+        // incoming connections (traffic hijack). Enable it only when you
+        // deliberately run several server instances side by side.
+        bool reuse_port = false;
         std::chrono::milliseconds epoll_timeout{1000}; // listen loop wake-up period
 
         // ---- file rendering hardening (readFile / readFileX / compose / render) ----

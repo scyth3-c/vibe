@@ -26,6 +26,21 @@
 
 using std::string;
 
+// Route-map key: path + separator + method. The separator is the control
+// character '\x1f': no valid request target (is_valid_target rejects every
+// byte <= 0x20) and no method token (RFC 9110 tchar) can contain it, so two
+// distinct registrations can never map to the same key. The legacy "path +
+// method" concatenation collided ("/x" with GET and "/xG" with "ET" both
+// produced "/xGET"), which let one route shadow another.
+[[nodiscard]] inline string route_key(const std::string_view path, const std::string_view method) {
+    string key;
+    key.reserve(path.size() + method.size() + 1);
+    key.append(path);
+    key.push_back('\x1f');
+    key.append(method);
+    return key;
+}
+
 
 struct Route {
 private:

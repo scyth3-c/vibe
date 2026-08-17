@@ -1,7 +1,3 @@
-//
-// Created by scythe on 5/07/23.
-//
-
 #ifndef VERMELL_ENUMS_H
 #define VERMELL_ENUMS_H
 

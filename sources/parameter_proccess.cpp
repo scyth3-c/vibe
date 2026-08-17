@@ -105,8 +105,14 @@ string HTTP_QUERY::get_params(const string &target){
 }
 
 string HTTP_QUERY::trim(string target){
-    target.erase(std::remove_if(target.begin(), target.end(),
-                                [](const unsigned char c) { return std::isspace(c); }),
-                 target.end());
-    return target;
+    // Edge-only trim: the legacy code erased EVERY whitespace character,
+    // which silently turned malformed values into valid-looking ones
+    // ("text/ html" -> "text/html") for legacy content-type comparisons.
+    const auto first = std::find_if_not(target.begin(), target.end(),
+                                        [](const unsigned char c) { return std::isspace(c) != 0; });
+    if (first == target.end())
+        return {};
+    const auto last = std::find_if_not(target.rbegin(), target.rend(),
+                                       [](const unsigned char c) { return std::isspace(c) != 0; }).base();
+    return string(first, last);
 }
