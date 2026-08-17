@@ -27,7 +27,7 @@ public:
     static std::pair<string, string> processing(const string &path, const int reserve,
                                                 const vermell::RenderSecurity& sec = {})
     {
-        if (!sec.root.empty() && !vermell::srender::is_within(sec.root, path))
+        if (!vermell::srender::is_within(vermell::effective_root(sec), path))
             return {notify::noPath(path), "403"};
 
         try {

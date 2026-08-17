@@ -60,6 +60,8 @@ public:
 
     Vermell& setReadTimeout(std::chrono::milliseconds timeout) noexcept;
     Vermell& setWriteTimeout(std::chrono::milliseconds timeout) noexcept;
+    // Total wall-clock budget for a whole request to arrive (slowloris cure).
+    Vermell& setRequestTimeout(std::chrono::milliseconds timeout) noexcept;
     Vermell& setMaxRequestSize(size_t bytes) noexcept;
     Vermell& setReadChunkSize(size_t bytes) noexcept;
     Vermell& setThreads(size_t threads) noexcept;
@@ -223,11 +225,16 @@ Vermell<T>& Vermell<T>::configure(const vermell::Config& config) noexcept {
         return std::chrono::milliseconds(ms < MIN_TIMEOUT_MS ? MIN_TIMEOUT_MS
                                     : ms > MAX_TIMEOUT_MS ? MAX_TIMEOUT_MS : ms);
     };
-    config_.read_timeout  = clamp_ms(config_.read_timeout);
-    config_.write_timeout = clamp_ms(config_.write_timeout);
-    config_.epoll_timeout = clamp_ms(config_.epoll_timeout);
+    config_.read_timeout    = clamp_ms(config_.read_timeout);
+    config_.write_timeout   = clamp_ms(config_.write_timeout);
+    config_.request_timeout = clamp_ms(config_.request_timeout);
+    config_.epoll_timeout   = clamp_ms(config_.epoll_timeout);
 
     applyNetworkConfig();
+    // Push the new values into a running server (RequestIO swaps them
+    // atomically); no-op before listen().
+    if (router_epoll != nullptr)
+        router_epoll->applyConfig(config_);
     return *this;
 }
 
@@ -245,6 +252,14 @@ template <class T>
 Vermell<T>& Vermell<T>::setWriteTimeout(const std::chrono::milliseconds timeout) noexcept {
     const long long ms = timeout.count();
     config_.write_timeout = std::chrono::milliseconds(
+        ms < 1 ? 1 : (ms > std::numeric_limits<int>::max() ? std::numeric_limits<int>::max() : ms));
+    return *this;
+}
+
+template <class T>
+Vermell<T>& Vermell<T>::setRequestTimeout(const std::chrono::milliseconds timeout) noexcept {
+    const long long ms = timeout.count();
+    config_.request_timeout = std::chrono::milliseconds(
         ms < 1 ? 1 : (ms > std::numeric_limits<int>::max() ? std::numeric_limits<int>::max() : ms));
     return *this;
 }

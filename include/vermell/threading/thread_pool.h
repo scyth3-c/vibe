@@ -42,6 +42,10 @@ namespace threading {
 
         // Blocks when the queue is full: that is the backpressure signal.
         future<void> addTask(std::function<void()> task);
+        // Non-blocking variant: returns false immediately when the queue is
+        // full, so the caller (the epoll dispatcher) can shed the connection
+        // instead of stalling the accept loop.
+        bool tryAddTask(std::function<void()> task);
         void kill();
 
     };

@@ -131,9 +131,14 @@ using enums::neo;
                         }
                     }
                     else {
-                        // UNIQUE: block until the connection and its request arrive
-                        ListenProcess(VER_NVALUE);
-                        ListenProcess(VER_NVALUE);
+                        // UNIQUE: serve one request, then stop. Loop on a
+                        // BOUNDED wait until a connection was fully handled:
+                        // a fast client whose accept and data events land in
+                        // the same epoll batch must not leave a second
+                        // infinite epoll_wait blocked forever.
+                        do {
+                            ListenProcess(wait_timeout);
+                        } while (request_t->handled_connections() == 0);
                     }
                 }
                 catch(const std::exception& e) {
@@ -152,6 +157,13 @@ using enums::neo;
 
         void setListenStatus(const neo::eStatus _status) {
             this->listen_status_.store(_status);
+        }
+
+        // Applies a new configuration to a running server (timeouts, limits,
+        // thread count). No-op before the first listen().
+        void applyConfig(const vermell::Config& config) {
+            if (request_t != nullptr)
+                request_t->ApplyConfig(config);
         }
     };
 }

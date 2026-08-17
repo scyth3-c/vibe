@@ -70,6 +70,9 @@
      // connection from landing on a still-shutting-down neighbor. Real
      // deployments should leave reuse_port OFF (Config::reuse_port).
      router.setReusePort(true);
+     // The test binary runs from the build dir: jail to the repo root so the
+     // "../examples/..." fixtures stay inside the jail.
+     router.configure({ .reuse_port = true, .render = { .root = ".." } });
      const string file = "../examples/file-template/index.html";
 
      ISOLATE(
@@ -96,6 +99,8 @@ TEST_F(TestSuite, TestReadFile) {
     // connection from landing on a still-shutting-down neighbor. Real
     // deployments should leave reuse_port OFF (Config::reuse_port).
     router.setReusePort(true);
+    // Jail to the repo root: the fixture lives in ../examples.
+    router.configure({ .reuse_port = true, .render = { .root = ".." } });
     const string file = "../examples/files/test.json";
 
     ISOLATE(
@@ -122,7 +127,7 @@ TEST_F(TestSuite, TestReadFile) {
      // connection from landing on a still-shutting-down neighbor. Real
      // deployments should leave reuse_port OFF (Config::reuse_port).
      router.setReusePort(true);
-     router.configure({ .reuse_port = true, .render = { .allow_readfilex = true } });
+     router.configure({ .reuse_port = true, .render = { .root = "..", .allow_readfilex = true } });
      router.get("/", {[&](Query &http) {
                 http.readFileX(file, "application/html");
            }});
@@ -685,7 +690,7 @@ TEST_F(TestSuite, TestReadFileXDisabledByConfig) {
      Router router;
      router.setPort(8091);
      router.configure({
-         .render = { .allow_readfilex = false },
+         .render = { .root = "..", .allow_readfilex = false },
      });
 
      router.get("/", {[&](Query &http) {
@@ -1241,7 +1246,7 @@ TEST(ParserHardeningUnit, ConflictingContentLengthIsSmuggling) {
 }
 
 TEST(ParserHardeningUnit, DuplicateContentLengthWithSameValueIsLegal) {
-     const string wire = "POST / HTTP/1.1\r\nContent-Length: 4\r\nContent-Length: 4\r\n\r\npong";
+     const string wire = "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nContent-Length: 4\r\n\r\npong";
      const auto i = Msg::inspect(wire);
      EXPECT_EQ(i.framing, Framing::Complete);
 
@@ -1331,12 +1336,12 @@ TEST(ParserHardeningUnit, BodyWithoutContentLengthIsIgnored) {
 }
 
 TEST(ParserHardeningUnit, BodyIsExactlyContentLengthBytes) {
-     const auto msg = Msg::parse("POST / HTTP/1.1\r\nContent-Length: 4\r\n\r\npongEXTRA");
+     const auto msg = Msg::parse("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\npongEXTRA");
      ASSERT_TRUE(msg.has_value());
      EXPECT_EQ(msg->body, "pong");
 
      // defense in depth: fewer bytes than promised must not parse
-     EXPECT_FALSE(Msg::parse("POST / HTTP/1.1\r\nContent-Length: 100\r\n\r\nshort").has_value());
+     EXPECT_FALSE(Msg::parse("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\nshort").has_value());
 }
 
 TEST(ParserHardeningUnit, MultipartNameMatchesOnlyAtParameterBoundary) {
@@ -1365,7 +1370,7 @@ TEST(ParserHardeningUnit, MultipartNameMatchesOnlyAtParameterBoundary) {
 
 // Sends raw bytes to a one-shot server and returns the raw wire response.
 static string raw_exchange(const uint16_t port, const string& bytes) {
-     const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
      if (fd < 0)
          return {};
 
@@ -1374,8 +1379,22 @@ static string raw_exchange(const uint16_t port, const string& bytes) {
      addr.sin_port   = htons(port);
      ::inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
-     if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+     // The server thread may still be binding when the client starts: retry
+     // the connect briefly instead of racing it (ECONNREFUSED before bind).
+     bool connected = false;
+     for (int attempt = 0; attempt < 100 && !connected; ++attempt) {
+         if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) {
+             connected = true;
+             break;
+         }
          ::close(fd);
+         ::usleep(20 * 1000); // 20 ms
+         fd = ::socket(AF_INET, SOCK_STREAM, 0);
+         if (fd < 0)
+             return {};
+     }
+     if (!connected) {
+         if (fd >= 0) ::close(fd);
          return {};
      }
 
@@ -1624,4 +1643,115 @@ TEST_F(TestSuite, TestDuplicateHostRejectedOverHttp) {
 
      EXPECT_NE(res.find("HTTP/1.1 400 Bad Request"), string::npos);
 }
+
+// ---------------------------------------------------------------------------
+// Hardening audit round 2: line-ending policy, per-line cap, default jail,
+// slowloris deadlines and queue shedding.
+// ---------------------------------------------------------------------------
+
+TEST(ParserHardeningUnit, BareLfRejectedForHttp11) {
+     // RFC 9112 §3.5 hardening: HTTP/1.1+ must use CRLF terminators. Bare-LF
+     // heads are a desync vector behind a proxy that normalizes differently.
+     EXPECT_FALSE(Msg::parse("GET / HTTP/1.1\nHost: x\n\n").has_value());
+     EXPECT_EQ(Msg::inspect("GET / HTTP/1.1\nHost: x\n\n").framing, Framing::BadRequest);
+}
+
+TEST(ParserHardeningUnit, MixedLineEndingsRejectedForHttp11) {
+     // CRLF request line + LF head terminator...
+     EXPECT_FALSE(Msg::parse("GET / HTTP/1.1\r\nHost: x\n\n").has_value());
+     EXPECT_EQ(Msg::inspect("GET / HTTP/1.1\r\nHost: x\n\n").framing, Framing::BadRequest);
+     // ...and LF request line + CRLF terminator.
+     EXPECT_FALSE(Msg::parse("GET / HTTP/1.1\nHost: x\r\n\r\n").has_value());
+     EXPECT_EQ(Msg::inspect("GET / HTTP/1.1\nHost: x\r\n\r\n").framing, Framing::BadRequest);
+     // A bare-LF header line inside a CRLF head is mixed too.
+     EXPECT_FALSE(Msg::parse("GET / HTTP/1.1\r\nHost: x\r\nX-A: 1\n\r\n").has_value());
+}
+
+TEST(ParserHardeningUnit, Http10KeepsBareLfLegacySupport) {
+     // HTTP/1.0 predates the CRLF requirement: legacy clients keep working.
+     EXPECT_TRUE(Msg::parse("GET / HTTP/1.0\nHost: h\n\n").has_value());
+     EXPECT_EQ(Msg::inspect("GET / HTTP/1.0\nHost: h\n\n").framing, Framing::Complete);
+}
+
+TEST(ParserHardeningUnit, GiantHeaderLineRejected) {
+     const string big = string(70000, 'a'); // > MAX_HEADER_LINE (64 KiB)
+     const string wire = "GET / HTTP/1.1\r\nHost: x\r\nX-Big: " + big + "\r\n\r\n";
+     EXPECT_FALSE(Msg::parse(wire).has_value());
+     EXPECT_EQ(Msg::inspect(wire).framing, Framing::BadRequest);
+
+     // Rejected early too, while the head is still incomplete.
+     const string partial = "GET / HTTP/1.1\r\nHost: x\r\nX-Big: " + big;
+     EXPECT_EQ(Msg::inspect(partial).framing, Framing::BadRequest);
+}
+
+TEST(ParserHardeningUnit, GiantRequestLineRejected) {
+     const string wire = "GET /" + string(70000, 'a') + " HTTP/1.1\r\nHost: x\r\n\r\n";
+     EXPECT_FALSE(Msg::parse(wire).has_value());
+     EXPECT_EQ(Msg::inspect(wire).framing, Framing::BadRequest);
+}
+
+TEST(SecureRenderUnit, DefaultJailBlocksAbsolutePaths) {
+     // No .render.root configured: the effective jail is the working
+     // directory, so an absolute path can never be served (LFI cure).
+     auto [data, status] = BasicRead::processing("/etc/passwd");
+     EXPECT_EQ(status, "403");
+     EXPECT_EQ(data.find("root:"), string::npos);
+
+     // A relative path inside the CWD is still served.
+     const string file = "./sec_jail_ok.txt";
+     { std::ofstream out(file); out << "inside"; }
+     auto [ok, ok_status] = BasicRead::processing(file);
+     EXPECT_EQ(ok_status, "200");
+     EXPECT_EQ(ok, "inside");
+     std::filesystem::remove(file);
+
+     // Traversal from the CWD is blocked too.
+     auto [trav, trav_status] = BasicRead::processing("../../etc/passwd");
+     EXPECT_EQ(trav_status, "403");
+}
+
+TEST(SecureRenderUnit, EffectiveRootHonorsConfiguredJail) {
+     vermell::RenderSecurity sec;
+     sec.root = "/etc"; // explicit jail: /etc/passwd is inside, CWD files are not
+     auto [in, in_status] = BasicRead::processing("/etc/passwd", sec);
+     EXPECT_EQ(in_status, "200");
+     EXPECT_NE(in.find("root:"), string::npos);
+     auto [out, out_status] = BasicRead::processing("./some_local_file", sec);
+     EXPECT_EQ(out_status, "403");
+}
+
+TEST_F(TestSuite, TestBareLfRejectedOverHttp) {
+     Router router;
+     router.setPort(8114);
+     router.get("/", {[&](Query &http) { http.send("unreachable"); }});
+
+     ISOLATE( router.listenOne(); )
+     const string res = raw_exchange(8114, "GET / HTTP/1.1\nHost: x\n\n");
+     isolate_method.get();
+
+     EXPECT_NE(res.find("HTTP/1.1 400 Bad Request"), string::npos);
+}
+
+TEST(ThreadPoolBackpressureTest, TryAddTaskShedsWhenFull) {
+     // Capacity is at least 1024 (queue_capacity); a long-running first task
+     // pins the single worker so the queue stays full while we fill it.
+     threading::ThreadPool pool(1, 2048);
+     auto first = pool.addTask([] { std::this_thread::sleep_for(std::chrono::seconds{5}); });
+     for (int i = 0; i < 2048; ++i)
+         EXPECT_TRUE(pool.tryAddTask([] {})); // fits up to the configured cap
+     EXPECT_FALSE(pool.tryAddTask([] {}));    // full: shed, never block
+     first.get();
+}
+
+TEST(SecurityRegression, RequestTimeoutAndConnectionsDefaultToSaneValues) {
+     Router router;
+     EXPECT_EQ(router.config().max_connections, 1024UL);       // bounded by default
+     EXPECT_GE(router.config().request_timeout.count(), 1);    // total deadline on
+
+     router.setRequestTimeout(std::chrono::hours{48});
+     EXPECT_LE(router.config().request_timeout.count(), std::numeric_limits<int>::max());
+     router.setRequestTimeout(std::chrono::milliseconds{0});
+     EXPECT_GE(router.config().request_timeout.count(), 1);
+}
+
 

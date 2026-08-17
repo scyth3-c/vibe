@@ -175,6 +175,10 @@ namespace vermell::http {
         // Hard cap on header fields: far beyond any browser or API client,
         // and a wall against header-flood abuse.
         static constexpr size_t MAX_HEADERS = 100;
+        // Hard cap on a single header line (request line included): a 64 KiB
+        // field is beyond any real client and bounds per-line memory no
+        // matter how large max_request_size is configured.
+        static constexpr size_t MAX_HEADER_LINE = 64 * 1024;
 
         std::string method;        // GET, POST, ...
         std::string target;        // raw request target, e.g. /index?id=2
@@ -239,12 +243,20 @@ namespace vermell::http {
             const auto [head_end, separator] = head_bounds(raw);
 
             if (head_end == std::string_view::npos) {
-                // Head still on the wire, but a flood of lines is already
-                // answer enough: reject without waiting for the terminator.
+                // Head still on the wire, but a flood of lines or a giant
+                // line is already answer enough: reject without waiting for
+                // the terminator.
                 size_t lines = 0;
-                for (size_t p = raw.find('\n'); p != std::string_view::npos; p = raw.find('\n', p + 1))
+                size_t prev = 0;
+                for (size_t p = raw.find('\n'); p != std::string_view::npos; p = raw.find('\n', p + 1)) {
                     if (++lines > MAX_HEADERS + 1) // +1: the request line
                         return {Framing::TooManyHeaders, 0};
+                    if (p - prev > MAX_HEADER_LINE) // a single line out of control
+                        return {Framing::BadRequest, 0};
+                    prev = p + 1;
+                }
+                if (raw.size() - prev > MAX_HEADER_LINE) // trailing partial line
+                    return {Framing::BadRequest, 0};
                 return {Framing::Incomplete, 0};
             }
 
@@ -255,6 +267,11 @@ namespace vermell::http {
                 return {Framing::BadRequest, 0};
             if (scan.transfer_encoding)
                 return {Framing::NotImplemented, 0};
+            // RFC 9112 §3.5: HTTP/1.1+ requests must use CRLF terminators;
+            // bare-LF or mixed line endings are a desync vector behind a
+            // proxy that normalizes differently.
+            if (!line_endings_ok(raw.substr(0, head_end), separator))
+                return {Framing::BadRequest, 0};
 
             const size_t base = head_end + separator;
             size_t total = base;
@@ -279,6 +296,8 @@ namespace vermell::http {
             const HeadScan scan = scan_head(head);
             if (scan.bad || scan.transfer_encoding || scan.too_many)
                 return std::nullopt; // inspect() already pinpointed the reason
+            if (!line_endings_ok(head, separator))
+                return std::nullopt; // RFC 9112 §3.5: bare-LF/mixed endings for HTTP/1.1+
 
             Message msg;
 
@@ -413,11 +432,15 @@ namespace vermell::http {
         static HeadScan scan_head(const std::string_view head) noexcept {
             HeadScan scan;
 
-            // Skip the request line.
-            size_t pos = head.find('\n');
-            if (pos == std::string_view::npos)
+            // Skip the request line, but a giant one is still a giant line.
+            const size_t first_eol = head.find('\n');
+            if (first_eol == std::string_view::npos)
                 return scan;
-            ++pos;
+            if (first_eol > MAX_HEADER_LINE) {
+                scan.bad = true;
+                return scan;
+            }
+            size_t pos = first_eol + 1;
 
             size_t count = 0;
             while (pos < head.size()) {
@@ -425,6 +448,10 @@ namespace vermell::http {
                 std::string_view line = head.substr(pos, eol == std::string_view::npos ? eol : eol - pos);
                 pos = eol == std::string_view::npos ? head.size() : eol + 1;
 
+                if (line.size() > MAX_HEADER_LINE) {
+                    scan.bad = true;
+                    return scan;
+                }
                 if (!line.empty() && line.back() == '\r')
                     line.remove_suffix(1);
                 if (line.empty())
@@ -502,6 +529,65 @@ namespace vermell::http {
                 && std::isdigit(static_cast<unsigned char>(v[5]))
                 && v[6] == '.'
                 && std::isdigit(static_cast<unsigned char>(v[7]));
+        }
+
+        // True when the request line declares HTTP/1.1 or newer. Malformed
+        // lines report false: parse() rejects them anyway, and inspect() only
+        // uses this to decide how strict the line-ending policy must be.
+        static bool version_at_least_11(const std::string_view request_line) noexcept {
+            std::string_view v = request_line;
+            if (!v.empty() && v.back() == '\r')
+                v.remove_suffix(1);
+            const size_t h = v.find("HTTP/");
+            if (h == std::string_view::npos || v.size() - h != 8)
+                return false;
+            const char major = v[h + 5];
+            const char minor = v[h + 7];
+            if (!std::isdigit(static_cast<unsigned char>(major)) || v[h + 6] != '.'
+                || !std::isdigit(static_cast<unsigned char>(minor)))
+                return false;
+            // Character comparisons only: keeps -Wstrict-overflow quiet and
+            // is equivalent to (major,minor) >= (1,1) for digit chars.
+            if (major < '1')
+                return false; // HTTP/0.x
+            if (major > '1')
+                return true;  // HTTP/2+
+            return minor >= '1'; // HTTP/1.1+
+        }
+
+        // RFC 9112 §3.5 line-ending policy: HTTP/1.1+ requires a CRLFCRLF
+        // head terminator and a trailing '\r' on every line. Bare-LF heads
+        // are tolerated only for HTTP/1.0 legacy clients; mixed endings
+        // inside one head are always rejected for HTTP/1.1+ (behind a proxy
+        // that folds differently they are a request-smuggling/desync vector).
+        static bool line_endings_ok(const std::string_view head,
+                                    const size_t separator) noexcept {
+            // A head with no headers at all ("GET / HTTP/1.1\r\n\r\n") has no
+            // internal '\n'; the whole head is the request line.
+            const size_t le = head.find('\n');
+            const std::string_view rl = le == std::string_view::npos ? head : head.substr(0, le);
+            if (!version_at_least_11(rl))
+                return true; // HTTP/1.0 legacy clients stay lenient
+            if (separator != 4)
+                return false; // bare-LF head terminator
+            if (rl.empty() || rl.back() != '\r')
+                return false; // the request line itself is not CRLF
+            if (le == std::string_view::npos)
+                return true; // no header lines to check
+            size_t pos = le + 1;
+            while (pos < head.size()) {
+                const size_t eol = head.find('\n', pos);
+                const std::string_view line = head.substr(pos, eol == std::string_view::npos ? eol : eol - pos);
+                // Every non-final line must be CRLF-terminated. The final
+                // line's CR is the first byte of the CRLFCRLF separator
+                // (already guaranteed by `separator == 4`).
+                if (eol != std::string_view::npos && !line.empty() && line.back() != '\r')
+                    return false; // a bare-LF header line inside a CRLF head
+                if (eol == std::string_view::npos)
+                    break;
+                pos = eol + 1;
+            }
+            return true;
         }
 
         void parse_content_type() {

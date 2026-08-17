@@ -23,7 +23,7 @@ public:
     //   - generic client errors; diagnostics stay on the server's stderr
     static std::pair<string, string> processing(const string& path,
                                                 const vermell::RenderSecurity& sec = {}) {
-        if (!sec.root.empty() && !vermell::srender::is_within(sec.root, path))
+        if (!vermell::srender::is_within(vermell::effective_root(sec), path))
             return {notify::noPath(path), "403"};
 
         auto read = vermell::srender::read_bounded(path, sec.max_file_bytes);

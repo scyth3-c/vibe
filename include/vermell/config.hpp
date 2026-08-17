@@ -32,6 +32,12 @@ namespace vermell {
         // Inactivity timeout between chunks: raise it for heavy uploads on
         // slow networks (e.g. a large image arriving in many TCP segments).
         std::chrono::milliseconds read_timeout{5000};
+        // Hard wall-clock deadline for the whole request to arrive (headers +
+        // body), regardless of how regularly the client trickles bytes. This
+        // is the slowloris cure: a client may never exceed read_timeout
+        // between chunks (1 byte every few seconds) yet must still finish the
+        // request within request_timeout or the connection is dropped (408).
+        std::chrono::milliseconds request_timeout{60000};
         // Inactivity timeout while writing the response back to the client.
         std::chrono::milliseconds write_timeout{5000};
         // Hard limit for a whole request (headers + body). Requests bigger
@@ -43,13 +49,14 @@ namespace vermell {
         // ---- concurrency / epoll ----
         size_t threads = 0; // worker threads; 0 = auto (hardware_concurrency)
         int max_events = 1024;                       // epoll event batch size
-        // Queued tasks before the dispatcher blocks (backpressure). 0 = auto:
+        // Queued tasks before the dispatcher sheds load. 0 = auto:
         // max(1024, threads * 256), enough to absorb an epoll batch burst.
         size_t max_queue_size = 0;
-        // Hard cap on simultaneously open client connections. 0 = unlimited
-        // (legacy). Setting a bound is the blunt DoS wall against
-        // connection-flood / slowloris style exhaustion.
-        size_t max_connections = 0;
+        // Hard cap on simultaneously open client connections. Bounded by
+        // default (1024) so a connection flood cannot exhaust memory (each
+        // connection buffers up to max_request_size bytes while reading).
+        // 0 = unlimited (legacy, NOT recommended).
+        size_t max_connections = 1024;
         // Share the listening port with other same-UID processes via
         // SO_REUSEPORT. OFF by default: when enabled, any process running as
         // the same user can bind the same port and receive a share of the

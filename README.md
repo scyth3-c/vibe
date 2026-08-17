@@ -104,6 +104,8 @@ router.configure({
 
     // request reading
     .read_timeout      = std::chrono::seconds{30}, // inactivity between chunks
+    .request_timeout   = std::chrono::seconds{60}, // total deadline for the whole
+                                                   // request to arrive (slowloris cure)
     .write_timeout     = std::chrono::seconds{10}, // inactivity while responding
     .max_request_size  = 16UL * 1024UL * 1024UL,   // bigger => 413 Payload Too Large
     .read_chunk        = 32UL * 1024UL,            // bytes read per recv() call
@@ -111,7 +113,8 @@ router.configure({
     // concurrency / epoll
     .threads           = 4,    // worker threads; 0 = auto (hardware_concurrency)
     .max_events        = 1024, // epoll event batch size
-    .max_queue_size    = 512,  // queued tasks before backpressure; 0 = auto
+    .max_queue_size    = 512,  // queued tasks before the dispatcher sheds load
+    .max_connections   = 1024, // hard cap on open connections; 0 = unlimited
     .epoll_timeout     = std::chrono::milliseconds{1000},
 });
 ```
@@ -121,7 +124,16 @@ router.configure({
 > — absurd values are a memory/DoS foot-gun, not a feature. Requests to
 > HTTP/1.1 (or newer) without exactly one `Host` header are rejected with 400
 > (RFC 9112 §3.2, proxy desync / request-smuggling vector); HTTP/1.0 legacy
-> clients keep working.
+> clients keep working. `max_connections` is bounded by default (1024) so a
+> connection flood cannot exhaust memory.
+>
+> **Slowloris is not a DoS anymore:** request bytes are read on the event loop
+> (non-blocking), so a trickling client occupies an epoll fd — bounded by
+> `max_connections` and the `read_timeout`/`request_timeout` deadlines — never
+> a worker thread. A client that sends 1 byte every few seconds for hours is
+> dropped with 408 as soon as the whole request exceeds `request_timeout`. When
+> the task queue is full the dispatcher sheds the connection (503) instead of
+> stalling the accept loop.
 
 Or use the chainable setters:
 
@@ -129,9 +141,17 @@ Or use the chainable setters:
 router.setThreads(4)
       .setMaxRequestSize(16UL * 1024UL * 1024UL)
       .setReadTimeout(std::chrono::seconds{30});
-// setWriteTimeout, setReadChunkSize, setMaxEvents,
-// setMaxQueueSize, setBacklog, setBufferSize, setPort, setReusePort
+// setWriteTimeout, setRequestTimeout, setReadChunkSize, setMaxEvents,
+// setMaxQueueSize, setMaxConnections, setBacklog, setBufferSize,
+// setPort, setReusePort
 ```
+
+> **`configure()` replaces the WHOLE configuration** (designated initializers
+> recommended): settings made earlier with the setters are discarded, so pass
+> everything in one call. `configure()` also applies to a **running** server —
+> timeouts, limits and the thread count are picked up live by the event loop
+> and the worker pool (`RequestIO::ApplyConfig`); only the network-side knobs
+> (`port`, `backlog`, `reuse_port`) need a restart.
 
 The active configuration is readable at runtime with `router.config()`.
 A full annotated example lives in [`examples/configuration`](examples/configuration/main.cpp).
@@ -160,7 +180,9 @@ archive and executable formats.
 > **Security:** `readFileX` compiles and runs embedded C++ on the server, so
 > it is **disabled by default**. Enable it with
 > `router.configure({ .render = { .allow_readfilex = true } })` only when the
-> template content is trusted.
+> template content is trusted. Execution is sandboxed: templates run with no
+> network access (seccomp), drop to `nobody` when the server is root, and are
+> bounded by rlimits and wall-clock timeouts (see [Render security](#render-security)).
 
 A template may hold **any number** of `$ ... $` blocks. Each block runs at
 its position in the page and whatever it writes to `std::cout` is spliced
@@ -210,21 +232,30 @@ router.configure({
 - All readers serve **regular files only** (no FIFOs/devices, symlinks are
   rejected via `O_NOFOLLOW`), cap the size in memory, and never leak
   internal errors to the client.
+- **The jail is ON even without `.root`:** an empty `render.root` falls back
+  to the working directory, so a server that never configured a root can
+  still not serve files from outside its launch directory (no more
+  open-by-default Local File Inclusion). Set `.root` to a dedicated
+  `public/` directory in production.
 - `compose()` module names (`#[name];`) are restricted to bare file names,
   so `#[../../etc/passwd];` is rejected, and the composed page is capped at
   `max_file_bytes` per pass — a module that (transitively) includes itself
   answers 413 instead of exhausting memory.
 - **`readFileX` is OFF by default.** It compiles and executes embedded C++,
   so it must be enabled explicitly (`.allow_readfilex = true`) only when the
-  template content is trusted. When enabled, execution is sandboxed: private
-  `mkdtemp` workspace (0700/0711), scrubbed environment, no inherited file
-  descriptors, rlimits (CPU/memory/output/processes/file-descriptors),
-  wall-clock timeouts enforced with `SIGKILL`, and — when the server runs as
-  root — the template is executed as the `nobody` user. Compiled binaries are
-  cached (SHA-256 of the source) under a private per-user directory, so
-  steady-state requests skip `g++` (the binary is 0755: a dynamically-linked
-  ELF needs read access for `ld.so` even with execute permission).
-- Set `.root` in production: without it there is no jail (legacy behavior).
+  template content is trusted. When enabled, execution is sandboxed: a
+  **seccomp filter denies networking and privileged/escape syscalls for the
+  whole template process tree** (no exfiltration, no scanning, no C2), plus
+  best-effort user/network namespace isolation; private `mkdtemp` workspace
+  (0700/0711), scrubbed environment, no inherited file descriptors, rlimits
+  (CPU/memory/output/processes/file-descriptors), wall-clock timeouts
+  enforced with `SIGKILL`, and — when the server runs as root — the template
+  is executed as the `nobody` user. An unprivileged server keeps its own
+  user's file permissions: treat template files as trusted code either way.
+  Compiled binaries are cached (SHA-256 of the source) under a private
+  per-user directory, so steady-state requests skip `g++` (the binary is
+  0755: a dynamically-linked ELF needs read access for `ld.so` even with
+  execute permission).
 
 ### readFileX toolchain
 

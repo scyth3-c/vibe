@@ -21,6 +21,12 @@
 //   - Compilation and execution run sandboxed: private mkdtemp workspace,
 //     scrubbed environment, no inherited file descriptors, rlimits on
 //     CPU/memory/output/processes and wall-clock timeouts with SIGKILL.
+//   - Execution is additionally isolated by a seccomp filter that denies
+//     networking and privileged/escape syscalls (inherited by every child
+//     the template spawns), plus best-effort user/network namespaces; when
+//     the server runs as root the template executes as the "nobody" user.
+//     An unprivileged server keeps its own user's file permissions — see
+//     the runtime warning and the README.
 //   - The toolchain (compiler, standard, optimization, hardening, extra
 //     flags and compiler resource limits) is fully configurable through
 //     vermell::RenderSecurity::cpp — see router.configure({ .render = { .cpp
@@ -69,7 +75,7 @@ public:
 
     static std::pair<string, string> processing(const string& path,
                                                 const vermell::RenderSecurity& sec = {}) {
-        if (!sec.root.empty() && !vermell::srender::is_within(sec.root, path))
+        if (!vermell::srender::is_within(vermell::effective_root(sec), path))
             return {notify::noPath(path), "403"};
 
         auto read = vermell::srender::read_bounded(path, sec.max_file_bytes);
@@ -88,6 +94,23 @@ public:
 
         if (!sec.allow_readfilex)
             return {"Vermell: C++ templates are disabled on this server", "403"};
+
+        // Honest operational note, once per process: template execution is
+        // arbitrary code on the server. The sandbox blocks networking and
+        // privilege escalation (seccomp) and drops to "nobody" when the
+        // server runs as root, but when the server itself is unprivileged
+        // the template keeps the server user's file permissions — only ever
+        // enable readFileX for trusted template content.
+        {
+            static std::once_flag warned;
+            std::call_once(warned, [] {
+                std::cerr << "vermell readFileX: C++ templates are enabled. Templates run "
+                             "without network access (seccomp) and drop to 'nobody' when the "
+                             "server is root; an unprivileged server keeps its own file "
+                             "permissions. Only serve trusted template content."
+                          << std::endl;
+            });
+        }
 
         try {
             TempDir work = make_temp_dir();
@@ -116,6 +139,7 @@ public:
             run_opts.work_dir        = work.path.c_str();
             run_opts.new_session     = true;
             run_opts.drop_privileges = true;
+            run_opts.sandbox         = true; // seccomp (no network) + namespaces
 
             const std::vector<const char*> execute = {binary.c_str(), nullptr};
             if (process::run_command(execute, out_file, run_opts) == VER_NVALUE) {

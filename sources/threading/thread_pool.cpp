@@ -96,6 +96,22 @@ future<void> ThreadPool::addTask(std::function<void()> task) {
 }
 
 
+bool ThreadPool::tryAddTask(std::function<void()> task) {
+
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (this->stop_.load())
+            return false;
+        if (this->queue_.size() >= this->max_queue_size_)
+            return false;
+        this->queue_.emplace(std::move(task));
+    }
+
+    this->cond_not_empty_.notify_one();
+    return true;
+}
+
+
 void ThreadPool::kill() {
 
     {

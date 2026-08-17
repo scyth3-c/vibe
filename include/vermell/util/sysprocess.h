@@ -46,6 +46,11 @@ namespace neosys {
         // execve(), so the executed program never holds root (or the server
         // user's) privileges. No-op when the server is already unprivileged.
         bool drop_privileges = false;
+        // True = run the child under the execution sandbox: a seccomp filter
+        // that denies networking and privileged/escape syscalls, plus (best
+        // effort) user/network namespace isolation. The readFileX run step
+        // enables this; the compiler step deliberately does not.
+        bool sandbox = false;
     };
 
     class process {
