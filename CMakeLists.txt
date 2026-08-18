@@ -34,7 +34,7 @@ option(TESTING "Enable testing" OFF)
 if (TESTING)
 
     enable_testing()
-    add_executable(main tests/main_test.cpp)
+    add_executable(main tests/test_cases.cpp)
     target_link_libraries(
             main
             vermell

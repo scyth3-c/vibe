@@ -20,7 +20,7 @@
     "non-blocking-io",
     "web",
     "c++",
-    "cpp17"
+    "cpp20"
   ],
   "license": "MIT",
   "private": false

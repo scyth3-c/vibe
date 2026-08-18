@@ -566,8 +566,8 @@ TEST(SecureRenderUnit, IncludeNameWhitelist) {
 }
 
 TEST(SecureRenderUnit, IsWithinJail) {
-     EXPECT_TRUE(vermell::srender::is_within(".", "./main_test.cpp"));
-     EXPECT_TRUE(vermell::srender::is_within(".", "main_test.cpp"));
+     EXPECT_TRUE(vermell::srender::is_within(".", "./test_cases.cpp"));
+     EXPECT_TRUE(vermell::srender::is_within(".", "test_cases.cpp"));
      EXPECT_FALSE(vermell::srender::is_within(".", "/etc/passwd"));
      EXPECT_FALSE(vermell::srender::is_within(".", "../../../../etc/passwd"));
      EXPECT_FALSE(vermell::srender::is_within(".", "../vermell/README.md"));
