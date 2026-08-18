@@ -2,6 +2,7 @@
 #define IO_H
 
 #include <memory>
+#include <shared_mutex>
 #include <sys/epoll.h>
 #include <netinet/in.h>
 #include <unordered_map>
@@ -43,11 +44,22 @@ class RequestIO {
     unique_ptr<int> epoll_fd;
     shared_ptr<Server> connection;
 
-    // Live server configuration. Read per request with an atomic load so
-    // router.configure() applies to a running server (timeouts, limits...)
-    // without a restart. Thread-safe: workers and the event loop each load
-    // their own shared_ptr to an immutable snapshot.
-    mutable std::atomic<std::shared_ptr<const vermell::Config>> config_;
+    // Live server configuration. router.configure() applies to a running
+    // server (timeouts, limits...) without a restart. Note that
+    // std::atomic<std::shared_ptr<T>> is ILL-FORMED: atomic<T> requires T to
+    // be trivially copyable and shared_ptr is not (GCC/libstdc++ rejects it
+    // with a static_assert — "is_trivially_copyable<...shared_ptr...>").
+    // The snapshot is therefore guarded by a shared_mutex: readers (workers
+    // and the event loop) take a shared lock and copy the shared_ptr to an
+    // immutable Config; ApplyConfig() takes a unique lock to swap it.
+    mutable std::shared_mutex config_mutex_;
+    std::shared_ptr<const vermell::Config> config_;
+
+    // Thread-safe copy of the live configuration snapshot.
+    [[nodiscard]] std::shared_ptr<const vermell::Config> config_snapshot() const {
+        std::shared_lock lock(config_mutex_);
+        return config_;
+    }
 
     shared_ptr<threading::ThreadPool> thread_pool_;
 
@@ -72,7 +84,7 @@ class RequestIO {
     mutable std::unordered_map<int, ConnState> pending_;
 
     size_t threads_{[this] {
-        const auto cfg = config_.load();
+        const auto cfg = config_snapshot();
         if (cfg && cfg->threads != 0)
             return cfg->threads;
         const unsigned int cores = std::thread::hardware_concurrency();

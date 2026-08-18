@@ -43,7 +43,7 @@ RequestIO::RequestIO(const shared_ptr<vector<epoll_event> > &events,
                                                    connection(con),
                                                    config_(std::make_shared<const vermell::Config>(config)) {
 
-    thread_pool_ = make_shared<threading::ThreadPool>(threads_, config_.load()->max_queue_size);
+    thread_pool_ = make_shared<threading::ThreadPool>(threads_, config_snapshot()->max_queue_size);
 }
 
 
@@ -109,8 +109,9 @@ void RequestIO::AcceptPending() const {
         // Shedding: when the connection cap is reached, accept and close
         // immediately so the listen backlog drains (the client sees a reset)
         // instead of spinning the event loop with an undrained readable fd.
-        if (config_.load()->max_connections != 0
-            && active_connections_.load() >= config_.load()->max_connections) {
+        const auto cfg = config_snapshot();
+        if (cfg->max_connections != 0
+            && active_connections_.load() >= cfg->max_connections) {
             close(client_file_descriptor);
             continue;
         }
@@ -144,7 +145,7 @@ void RequestIO::AcceptPending() const {
 
 void RequestIO::HandleReadable(const int fd) const {
 
-    const auto cfg = config_.load();
+    const auto cfg = config_snapshot();
 
     auto& st = pending_[fd];
     const auto now = std::chrono::steady_clock::now();
@@ -248,7 +249,7 @@ void RequestIO::HandleReadable(const int fd) const {
 
 void RequestIO::SweepStale() const {
 
-    const auto cfg = config_.load();
+    const auto cfg = config_snapshot();
     if (cfg->request_timeout.count() <= 0 && cfg->read_timeout.count() <= 0)
         return; // deadlines disabled
 
@@ -316,7 +317,7 @@ void RequestIO::ServeRequest(const int fd, std::string raw) const {
 
     base->setPort(connection->getPort());
     base->setSocketId(fd);
-    base->setWriteTimeout(config_.load()->write_timeout);
+    base->setWriteTimeout(config_snapshot()->write_timeout);
     base->setResponse(std::move(raw));
 
     ExecuteRoute(base, routes);
@@ -354,7 +355,7 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
 
                 if (!guarded) {
                     std::unique_ptr<string> guard_msg;
-                    auto [data, time_key] = itr->second->middlewares.execute(*message, guard_msg, config_.load()->render);
+                    auto [data, time_key] = itr->second->middlewares.execute(*message, guard_msg, config_snapshot()->render);
 
                     if (time_key > VER_OK) {
                         std::lock_guard<std::mutex> lock(itr->second->route_mutex);
@@ -408,12 +409,12 @@ bool RequestIO::TimeGuard(const RoutesMap::const_iterator &itr) {
 
 
 void RequestIO::SetThreads(size_t size) {
-    thread_pool_ = make_shared<threading::ThreadPool>(size, config_.load()->max_queue_size);
+    thread_pool_ = make_shared<threading::ThreadPool>(size, config_snapshot()->max_queue_size);
 }
 
 
 void RequestIO::ApplyConfig(const vermell::Config& config) {
-    const auto current = config_.load();
+    const auto current = config_snapshot();
     if (current && config.threads != current->threads) {
         if (config.threads == 0) {
             const unsigned int cores = std::thread::hardware_concurrency();
@@ -422,5 +423,8 @@ void RequestIO::ApplyConfig(const vermell::Config& config) {
             SetThreads(config.threads);
         }
     }
-    config_.store(std::make_shared<const vermell::Config>(config));
+    {
+        std::unique_lock lock(config_mutex_);
+        config_ = std::make_shared<const vermell::Config>(config);
+    }
 }
