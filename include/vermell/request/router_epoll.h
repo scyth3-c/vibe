@@ -21,7 +21,8 @@
 #include "io.h"
 
 namespace workers {
-using RoutesMap = std::unordered_map<string, std::unique_ptr<listen_routes>>;
+// RoutesMap lives in routes.hpp (transparent hashing for allocation-free
+// lookups); it is visible here through the include chain.
 using enums::neo;
 
     constexpr int BUFFER = neo::eSize::BUFFER;

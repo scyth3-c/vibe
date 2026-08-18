@@ -3,6 +3,7 @@
 #define ROUTES_DEMAND_HPP
 
 #include <string>
+#include <string_view>
 
 #include <memory>
 #include <mutex>
@@ -11,6 +12,7 @@
 #include <initializer_list>
 #include <functional>
 #include <future>
+#include <unordered_map>
 
 
 #include "request/request.hpp"
@@ -194,6 +196,35 @@ struct listen_routes {
     // Guards time_key / time_point / guardRouteMsg: requests are served concurrently.
     std::mutex route_mutex;
 };
+
+// ---- route table ----------------------------------------------------------
+//
+// The route map is keyed by "path\x1fmethod" (see route_key). Transparent
+// hashing lets the hot lookup path find() with a std::string_view built in a
+// stack buffer — no per-request key allocation. std::hash<std::string> and
+// std::hash<std::string_view> are byte-identical on the same characters, so
+// hashes computed for stored std::string keys and looked-up string_views
+// always agree.
+struct RouteMapHash {
+    using is_transparent = void;
+    [[nodiscard]] size_t operator()(const std::string& s) const noexcept {
+        return std::hash<std::string_view>{}(std::string_view(s));
+    }
+    [[nodiscard]] size_t operator()(std::string_view s) const noexcept {
+        return std::hash<std::string_view>{}(s);
+    }
+};
+
+struct RouteMapEq {
+    using is_transparent = void;
+    [[nodiscard]] bool operator()(const std::string& a, const std::string& b) const noexcept { return a == b; }
+    [[nodiscard]] bool operator()(const std::string& a, std::string_view b) const noexcept { return a == b; }
+    [[nodiscard]] bool operator()(std::string_view a, const std::string& b) const noexcept { return a == b; }
+    [[nodiscard]] bool operator()(std::string_view a, std::string_view b) const noexcept { return a == b; }
+};
+
+using RoutesMap = std::unordered_map<string, std::unique_ptr<listen_routes>,
+                                    RouteMapHash, RouteMapEq>;
 
 struct Route_t {
     Route_t(string _r, MiddlewareList _m, string _t) : route(std::move(_r)), middlewares(std::move(_m)), type(std::move(_t)) { }

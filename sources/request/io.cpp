@@ -1,7 +1,10 @@
 #include "../../include/vermell/request/io.h"
 
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstring>
+#include <netinet/tcp.h>
 
 namespace {
 
@@ -70,10 +73,10 @@ void RequestIO::Dispatch(const int notice) const {
             // a complete request); anything still incomplete is dropped.
             if (event_mask & EPOLLIN)
                 HandleReadable(event_fd);
-            if (pending_.contains(event_fd)) {
+            if (has_pending(event_fd)) {
                 epoll_ctl(*epoll_fd, EPOLL_CTL_DEL, event_fd, nullptr);
                 close(event_fd);
-                pending_.erase(event_fd);
+                drop_pending(event_fd);
                 active_connections_.fetch_sub(1);
                 handled_.fetch_add(1);
             }
@@ -121,6 +124,12 @@ void RequestIO::AcceptPending() const {
             continue;
         }
 
+        // Disable Nagle: with delayed ACK a tiny response can otherwise sit
+        // in the socket for up to 40 ms. Best-effort; never fatal.
+        int nodelay = 1;
+        (void)::setsockopt(client_file_descriptor, IPPROTO_TCP, TCP_NODELAY,
+                           &nodelay, static_cast<socklen_t>(sizeof(nodelay)));
+
         epoll_event client_event{};
         client_event.events = EPOLLIN; // level triggered; kept registered while reading
         client_event.data.fd = client_file_descriptor;
@@ -136,7 +145,7 @@ void RequestIO::AcceptPending() const {
         // Track the connection from birth: the deadlines below apply even to
         // clients that connect and never send a byte.
         const auto now = std::chrono::steady_clock::now();
-        auto& st = pending_[client_file_descriptor];
+        auto& st = pending_slot(client_file_descriptor);
         st.start = now;
         st.last_activity = now;
     }
@@ -147,18 +156,27 @@ void RequestIO::HandleReadable(const int fd) const {
 
     const auto cfg = config_snapshot();
 
-    auto& st = pending_[fd];
+    auto& st = pending_slot(fd);
     const auto now = std::chrono::steady_clock::now();
     if (st.start == std::chrono::steady_clock::time_point{})
         st.start = now;
 
     // ---- drain everything the socket has right now (non-blocking) ----
-    std::vector<char> chunk(cfg->read_chunk);
+    // Reused scratch buffer: one allocation for the lifetime of the server
+    // instead of a per-event heap allocation + zero-fill. Capped at 1 MiB
+    // (configure() already clamps read_chunk, but a hand-built Config handed
+    // straight to ApplyConfig must not trigger a giant allocation here).
+    const size_t want = std::min<size_t>(cfg->read_chunk > 0 ? cfg->read_chunk : 16384,
+                                         1UL << 20);
+    if (read_scratch_.size() < want)
+        read_scratch_.resize(want);
+    char* const buf = read_scratch_.data();
+    const size_t bufsz = read_scratch_.size();
     bool peer_closed = false;
     for (;;) {
-        const ssize_t bytes = recv(fd, chunk.data(), chunk.size(), 0);
+        const ssize_t bytes = recv(fd, buf, bufsz, 0);
         if (bytes > 0) {
-            st.buffer.append(chunk.data(), static_cast<size_t>(bytes));
+            st.buffer.append(buf, static_cast<size_t>(bytes));
             st.last_activity = std::chrono::steady_clock::now();
             if (st.buffer.size() > cfg->max_request_size) {
                 Reject(fd, 413, "payload too large");
@@ -192,7 +210,7 @@ void RequestIO::HandleReadable(const int fd) const {
         if (st.buffer.size() >= st.expected) {
             epoll_ctl(*epoll_fd, EPOLL_CTL_DEL, fd, nullptr); // worker owns the fd now
             std::string raw = std::move(st.buffer);
-            pending_.erase(fd);
+            drop_pending(fd);
             DispatchTask(fd, std::move(raw));
             return;
         }
@@ -230,7 +248,7 @@ void RequestIO::HandleReadable(const int fd) const {
         case vermell::http::Message::Framing::Complete: {
             epoll_ctl(*epoll_fd, EPOLL_CTL_DEL, fd, nullptr); // worker owns the fd now
             std::string raw = std::move(st.buffer);
-            pending_.erase(fd);
+            drop_pending(fd);
             DispatchTask(fd, std::move(raw));
             return;
         }
@@ -254,23 +272,27 @@ void RequestIO::SweepStale() const {
         return; // deadlines disabled
 
     const auto now = std::chrono::steady_clock::now();
-    for (auto it = pending_.begin(); it != pending_.end();) {
-        const bool total_over = cfg->request_timeout.count() > 0
-                                && now - it->second.start > cfg->request_timeout;
-        const bool idle_over = cfg->read_timeout.count() > 0
-                               && now - it->second.last_activity > cfg->read_timeout;
-        if (!total_over && !idle_over) {
-            ++it;
+    // Slot map iteration: contiguous vector, indices are the fds. reset()
+    // (not erase) keeps the vector stable while iterating.
+    for (size_t i = 0; i < pending_.size(); ++i) {
+        auto& slot = pending_[i];
+        if (!slot.has_value())
             continue;
-        }
+        const ConnState& st = *slot;
+        const bool total_over = cfg->request_timeout.count() > 0
+                                && now - st.start > cfg->request_timeout;
+        const bool idle_over = cfg->read_timeout.count() > 0
+                               && now - st.last_activity > cfg->read_timeout;
+        if (!total_over && !idle_over)
+            continue;
 
-        const int fd = it->first;
+        const int fd = static_cast<int>(i);
         epoll_ctl(*epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
         send_best_effort(fd, error_response(408, "request timeout"));
         close(fd);
         active_connections_.fetch_sub(1);
         handled_.fetch_add(1);
-        it = pending_.erase(it);
+        drop_pending(fd);
     }
 }
 
@@ -301,7 +323,7 @@ void RequestIO::Reject(const int fd, const int code, const char* error) const {
     epoll_ctl(*epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
     send_best_effort(fd, error_response(code, error));
     close(fd);
-    pending_.erase(fd);
+    drop_pending(fd);
     active_connections_.fetch_sub(1);
     handled_.fetch_add(1);
 }
@@ -313,19 +335,22 @@ void RequestIO::ServeRequest(const int fd, std::string raw) const {
     // worker; the guard releases the count on every exit path.
     ConnectionGuard guard(active_connections_);
 
-    const auto base = std::make_shared<Server>();
+    // Stack request context: no per-request heap allocation. The worker
+    // closes the fd (ExecuteRoute) before this object goes out of scope, and
+    // Server's destructor never closes sockets on its own.
+    Server base;
 
-    base->setPort(connection->getPort());
-    base->setSocketId(fd);
-    base->setWriteTimeout(config_snapshot()->write_timeout);
-    base->setResponse(std::move(raw));
+    base.setPort(connection->getPort());
+    base.setSocketId(fd);
+    base.setWriteTimeout(config_snapshot()->write_timeout);
+    base.setResponse(std::move(raw));
 
     ExecuteRoute(base, routes);
     handled_.fetch_add(1); // ServeRequest never returns early: always handled
 }
 
 
-void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_ptr<RoutesMap> &routes) const {
+void RequestIO::ExecuteRoute(Server& instance, const shared_ptr<RoutesMap> &routes) const {
     string send_target = vermell::http::Response{}
                              .status(404)
                              .type("application/json")
@@ -335,13 +360,28 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
     bool head_only = false;
 
     try {
-        const string socket_response = instance->getResponse();
+        const string socket_response = instance.getResponse();
 
         if (const auto message = vermell::http::Message::parse(socket_response)) {
 
             head_only = (message->method == "HEAD");
 
-            if (const auto itr = routes->find(route_key(message->path, message->method)); itr != routes->end()) {
+            // Route lookup without a per-request key allocation: build
+            // "path\x1fmethod" in a small inline buffer and find() it via
+            // the map's transparent hashing (see RouteMapHash/RouteMapEq).
+            const std::string_view path_view = message->path;
+            const std::string_view method_view = message->method;
+            const size_t key_len = path_view.size() + 1 + method_view.size();
+            std::array<char, 64> key_buf;          // not zero-initialized: we write key_len bytes
+            std::string key_heap;                  // fallback for long paths
+            char* const key = key_len <= key_buf.size()
+                                  ? key_buf.data()
+                                  : (key_heap.resize(key_len), key_heap.data());
+            std::memcpy(key, path_view.data(), path_view.size());
+            key[path_view.size()] = '\x1f';
+            std::memcpy(key + path_view.size() + 1, method_view.data(), method_view.size());
+
+            if (const auto itr = routes->find(std::string_view(key, key_len)); itr != routes->end()) {
 
                 bool guarded;
                 {
@@ -387,10 +427,10 @@ void RequestIO::ExecuteRoute(const shared_ptr<Server> &instance, const shared_pt
             send_target.resize(sep + 4);
     }
 
-    instance->sendResponse(send_target);
+    instance.sendResponse(send_target);
 
     // The worker owns the fd: this is the single close point of the connection.
-    if (close(instance->getDescription()) < enums::neo::eReturn::OK && errno != EBADF)
+    if (close(instance.getDescription()) < enums::neo::eReturn::OK && errno != EBADF)
         terminal(VER_SOCKET_CLOSE, strerror(errno));
 }
 

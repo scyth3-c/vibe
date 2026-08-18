@@ -2,6 +2,7 @@
 #define IO_H
 
 #include <memory>
+#include <optional>
 #include <shared_mutex>
 #include <sys/epoll.h>
 #include <netinet/in.h>
@@ -21,8 +22,8 @@
 #include "../threading/thread_pool.h"
 
 using std::make_shared, std::vector, std::unique_ptr;
-
-using RoutesMap = std::unordered_map<string, std::unique_ptr<listen_routes>>;
+// RoutesMap is defined in routes.hpp (transparent hashing for
+// allocation-free lookups).
 /*
  *  RequestIO for Server socket class, if you want implement other Server, you should create other RequestIO for the implementation
  *
@@ -72,7 +73,7 @@ class RequestIO {
     mutable std::atomic<size_t> handled_{0};
 
     // Read state of every connection that has not produced a complete
-    // request yet. Only the event-loop thread reads/writes this map, so no
+    // request yet. Only the event-loop thread reads/writes this table, so no
     // locking is needed.
     struct ConnState {
         std::string buffer;                                     // bytes received so far
@@ -81,7 +82,42 @@ class RequestIO {
         size_t expected = 0;     // total request size once the head is known
         bool head_known = false; // the head was validated by Message::inspect
     };
-    mutable std::unordered_map<int, ConnState> pending_;
+
+    // Connection slot map: a flat vector indexed by fd. The kernel hands out
+    // the lowest free fd, so fd numbers stay dense and bounded by the
+    // concurrent connection count (itself bounded by max_connections /
+    // RLIMIT_NOFILE) — a lookup is one cache line instead of a hash-table
+    // node chase, and the entries are contiguous for SweepStale(). An empty
+    // optional = no connection on that fd.
+    mutable std::vector<std::optional<ConnState>> pending_;
+
+    // Reused recv scratch buffer (event-loop thread only): avoids a
+    // heap allocation + zero-fill per readable event.
+    mutable std::vector<char> read_scratch_;
+
+    // ---- fd slot-map helpers (event-loop thread only) ----
+
+    [[nodiscard]] bool has_pending(const int fd) const noexcept {
+        return fd >= 0 && static_cast<size_t>(fd) < pending_.size()
+            && pending_[static_cast<size_t>(fd)].has_value();
+    }
+    // Get-or-create the slot for a freshly accepted fd (kernel fds are
+    // always >= 0; callers pass accepted/event-loop fds only).
+    ConnState& pending_slot(const int fd) const {
+        const size_t u = static_cast<size_t>(fd);
+        if (u >= pending_.size())
+            pending_.resize(u + 1); // value-initializes empty optionals
+        auto& slot = pending_[u];
+        if (!slot.has_value())
+            slot.emplace();
+        return *slot;
+    }
+    // Drops the connection state (frees its buffer). Safe to call for an
+    // unknown fd; a later accept that reuses the fd gets a fresh slot.
+    void drop_pending(const int fd) const noexcept {
+        if (fd >= 0 && static_cast<size_t>(fd) < pending_.size())
+            pending_[static_cast<size_t>(fd)].reset();
+    }
 
     size_t threads_{[this] {
         const auto cfg = config_snapshot();
@@ -126,7 +162,7 @@ class RequestIO {
     [[nodiscard]] size_t handled_connections() const noexcept { return handled_.load(); }
 
     static bool TimeGuard(const RoutesMap::const_iterator & itr);
-    void ExecuteRoute(const shared_ptr<Server> &instance, const shared_ptr<RoutesMap> &routes) const;
+    void ExecuteRoute(Server& instance, const shared_ptr<RoutesMap> &routes) const;
 };
 
 #endif //IO_H

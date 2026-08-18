@@ -62,9 +62,12 @@ class Engine {
         std::mutex lock_guard;
         std::mutex response_guard;
         uint16_t PORT;
-        shared_ptr 
-                   <int> 
-                         socket_id = nullptr,
+        // Plain int: the hot path (ServeRequest) assigns an accepted fd to a
+        // fresh stack Server per request, so a shared_ptr<int> would cost a
+        // heap allocation per request for one integer. -1 = no socket.
+        int socket_id = -1;
+        shared_ptr
+                   <int>
                          state_receptor = nullptr,
                          address_len = make_shared<int>(static_cast<int>(sizeof(address))),
                          option_mame = make_shared<int>(0x1),
@@ -120,10 +123,12 @@ class Server final : public Engine {
      int Close() override;
 
      [[maybe_unused]] [[nodiscard]] inline int getDescription() const {
-          return socket_id != nullptr ? *socket_id : -1;
+          return socket_id;
      }
-     [[maybe_unused]] inline shared_ptr<int> getSocketId() { return socket_id; }
-     [[maybe_unused]] inline void setSocketId(int const identity) { socket_id = std::make_shared<int>(identity); }
+     // Kept for API compatibility; allocating here is fine (never on the
+     // request hot path, which reads getDescription()/sendResponse()).
+     [[maybe_unused]] inline shared_ptr<int> getSocketId() { return std::make_shared<int>(socket_id); }
+     [[maybe_unused]] inline void setSocketId(int const identity) { socket_id = identity; }
 
      void setSessions(int);
      // Inactivity timeout while writing the response to the client.
@@ -138,6 +143,9 @@ class Server final : public Engine {
      void sendResponse(const string&) const;
      void setResponse(const std::array<char, DEF_BUFFER_SIZE> &buffer);
      void setResponse(const string &data);
+     // Move overload: the request body is handed to the worker by value, so
+     // this avoids copying the whole body into the response storage.
+     void setResponse(string &&data);
 
      inline void setEpollEvents(std::vector<epoll_event> const &e){events = e;}
      inline void setEpollfd(int const arg) noexcept { epoll_fd = arg; }
